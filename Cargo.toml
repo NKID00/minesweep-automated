@@ -1,5 +1,5 @@
 [package]
-name = "minesweep-automated-ui"
+name = "minesweep-automated"
 version = "0.1.0"
 edition = "2021"
 
