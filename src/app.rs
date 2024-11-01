@@ -1,11 +1,14 @@
+use leptos::logging::log;
 use leptos::*;
 use leptos_meta::*;
+use leptos_use::{use_mouse_in_element, UseMouseInElementReturn};
 use stylers::style_str;
-use wasm_bindgen::prelude::*;
 use web_sys::HtmlDivElement;
 
+use minesweep_core::{GameOptions, GameView};
+
 #[component]
-pub fn Map() -> impl IntoView {
+pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
     view! {
         <canvas />
     }
@@ -15,28 +18,43 @@ pub fn Map() -> impl IntoView {
 pub fn Controls() -> impl IntoView {
     let div_ref = create_node_ref();
     let (mouse_down, set_mouse_down) = create_signal(false);
-    let (previous_pos_x, set_previous_pos_x) = create_signal(0);
-    let (previous_pos_y, set_previous_pos_y) = create_signal(0);
-    let closure: Box<dyn FnMut(_)> = Box::new(move |ev: web_sys::MouseEvent| {
-        if !mouse_down.get_untracked() {
-            return;
+    let UseMouseInElementReturn {
+        x: mouse_x,
+        y: mouse_y,
+        element_position_x,
+        element_position_y,
+        ..
+    } = use_mouse_in_element(div_ref);
+    create_effect(move |offset_when_mouse_down| {
+        let Some(offset_when_mouse_down) = offset_when_mouse_down else {
+            mouse_down.track();
+            return None;
+        };
+        if !mouse_down() {
+            return None;
         }
-        let offset_x = ev.client_x() - previous_pos_x.get_untracked();
-        let offset_y = ev.client_y() - previous_pos_y.get_untracked();
-        set_previous_pos_x.set_untracked(ev.client_x());
-        set_previous_pos_y.set_untracked(ev.client_y());
-        let element: &HtmlDivElement = &*div_ref.get_untracked().unwrap();
-        element
-            .style()
-            .set_property("left", &format!("{}px", element.offset_left() + offset_x))
-            .unwrap();
-        element
-            .style()
-            .set_property("top", &format!("{}px", element.offset_top() + offset_y))
-            .unwrap();
+        match offset_when_mouse_down {
+            Some((offset_x, offset_y)) => {
+                let element: &HtmlDivElement = &*div_ref().unwrap();
+                element
+                    .style()
+                    .set_property("left", &format!("{}px", mouse_x() - offset_x))
+                    .unwrap();
+                element
+                    .style()
+                    .set_property("top", &format!("{}px", mouse_y() - offset_y))
+                    .unwrap();
+                Some((offset_x, offset_y))
+            }
+            None => {
+                // reached at first time after mouse down
+                Some((
+                    mouse_x() - element_position_x(),
+                    mouse_y() - element_position_y(),
+                ))
+            }
+        }
     });
-    let closure = Closure::wrap(closure);
-    document().add_event_listener_with_callback("mousemove", closure.into_js_value().unchecked_ref()).unwrap();
     let (class_name, style_val) = style_str! {
         h1 {
             font-size: 1.25rem;
@@ -64,11 +82,11 @@ pub fn Controls() -> impl IntoView {
     view! {
         class = class_name,
         <Style> { style_val } </Style>
-        <div ref=div_ref on:mousedown=move |ev| {
+        <div ref=div_ref on:mousedown=move |_| {
+            log!("mouse down");
             set_mouse_down(true);
-            set_previous_pos_x(ev.client_x());
-            set_previous_pos_y(ev.client_y());
-        } on:mouseup=move |_ev| {
+        } on:mouseup=move |_| {
+            log!("mouse up");
             set_mouse_down(false);
         }>
             <h1>"Minesweep Automated"</h1>
@@ -91,11 +109,19 @@ pub fn Controls() -> impl IntoView {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+    let options = GameOptions {
+        size: (3, 3),
+        safe_pos: None,
+        mines: 3,
+        seed: Some(1),
+    };
+    let state = options.build();
+    let view = create_rw_signal(state.into());
     let (class_name, style_val) = style_str! {};
     view! {
         class = class_name,
         <Style> { style_val } </Style>
-        <Map />
+        <Map view />
         <Controls />
     }
 }
