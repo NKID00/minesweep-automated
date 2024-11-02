@@ -218,6 +218,14 @@ impl From<GameState> for GameView {
 }
 
 impl GameView {
+    pub fn width(&self) -> usize {
+        self.state.width()
+    }
+
+    pub fn height(&self) -> usize {
+        self.state.width()
+    }
+
     fn refresh_game_result(&mut self) {
         self.result = self.state.game_result();
     }
@@ -338,6 +346,42 @@ impl GameView {
         if self.result != GameResult::Playing {
             self.refresh_all_cell();
         }
+    }
+
+    pub fn iter(&self) -> GameViewIter {
+        GameViewIter {
+            game_view: self,
+            width: self.state.width(),
+            height: self.state.height(),
+            x: 0,
+            y: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct GameViewIter<'a> {
+    game_view: &'a GameView,
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+}
+
+impl Iterator for GameViewIter<'_> {
+    type Item = (usize, usize, CellView);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.x >= self.width {
+            self.x = 0;
+            self.y += 1;
+        }
+        if self.y >= self.height {
+            return None;
+        }
+        let result = (self.x, self.y, self.game_view.cells[self.y][self.x]);
+        self.x += 1;
+        Some(result)
     }
 }
 
