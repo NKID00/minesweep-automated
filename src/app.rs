@@ -1,4 +1,4 @@
-use ev::mouseup;
+use ev::{mousemove, mouseup};
 use html::Canvas;
 use js_sys::{Object, Reflect};
 use leptos::logging::log;
@@ -9,10 +9,10 @@ use leptos_use::{
     UseMouseReturn, UseWindowSizeReturn,
 };
 use stylers::style_str;
-use wasm_bindgen::{JsCast as _, JsValue};
-use web_sys::{CanvasRenderingContext2d, HtmlDivElement};
+use wasm_bindgen::{prelude::*, JsValue};
+use web_sys::{CanvasRenderingContext2d, HtmlDivElement, HtmlImageElement};
 
-use minesweep_core::{CellView, GameOptions, GameView};
+use minesweep_core::{CellView, GameOptions, GameView, Gesture};
 
 #[derive(Debug, Clone)]
 struct Transform {
@@ -24,13 +24,17 @@ struct Transform {
 const SCALE_FACTOR: f64 = 1.1;
 
 impl Transform {
-    fn scale(&mut self, wheel: f64) {
+    fn scale(&mut self, scale_origin_x: f64, scale_origin_y: f64, wheel: f64) {
+        let before = self.scale;
         match wheel.signum() {
             1. => self.scale /= SCALE_FACTOR,
             -1. => self.scale *= SCALE_FACTOR,
             _ => unreachable!(),
         }
         self.scale = self.scale.clamp(0.02, 2.);
+        let scale = self.scale / before;
+        self.origin_x += (self.origin_x - scale_origin_x) * (scale - 1.);
+        self.origin_y += (self.origin_y - scale_origin_y) * (scale - 1.);
     }
 
     fn cell_size(&self) -> f64 {
@@ -43,7 +47,7 @@ impl Transform {
 }
 
 const CELL_SIZE: f64 = 50.;
-const CELL_GAP: f64 = 25.;
+const CELL_GAP: f64 = 10.;
 
 fn clear(ctx: &CanvasRenderingContext2d, canvas: &HtmlElement<Canvas>) {
     ctx.save();
@@ -52,7 +56,7 @@ fn clear(ctx: &CanvasRenderingContext2d, canvas: &HtmlElement<Canvas>) {
     ctx.restore();
 }
 
-fn draw_game_view(ctx: &CanvasRenderingContext2d, t: &Transform, view: &GameView) {
+fn draw_game_view(ctx: &CanvasRenderingContext2d, images: &Images, t: &Transform, view: &GameView) {
     ctx.save();
     let w = view.width();
     let h = view.height();
@@ -61,27 +65,60 @@ fn draw_game_view(ctx: &CanvasRenderingContext2d, t: &Transform, view: &GameView
     ctx.translate(t.origin_x - (w_pixels / 2.), t.origin_y - (h_pixels / 2.))
         .unwrap();
     for (x, y, cell) in view.iter() {
-        draw_cell(ctx, t, cell, x, y);
+        draw_cell(ctx, t, images, cell, x, y);
     }
     ctx.restore();
 }
 
-fn draw_cell(ctx: &CanvasRenderingContext2d, t: &Transform, cell: CellView, x: usize, y: usize) {
+#[derive(Debug, Clone)]
+struct Images {
+    numbers: Vec<HtmlImageElement>,
+    flag: HtmlImageElement,
+    question: HtmlImageElement,
+    mine: HtmlImageElement,
+    wrong_mine: HtmlImageElement,
+    explosion: HtmlImageElement,
+}
+
+fn draw_cell(
+    ctx: &CanvasRenderingContext2d,
+    t: &Transform,
+    images: &Images,
+    cell: CellView,
+    x: usize,
+    y: usize,
+) {
+    let x = x as f64 * (t.cell_size() + t.cell_gap());
+    let y = y as f64 * (t.cell_size() + t.cell_gap());
+    let w = t.cell_size();
+    let h = t.cell_size();
     match cell {
-        minesweep_core::CellView::Unopened => ctx.set_fill_style(&"gray".into()),
-        minesweep_core::CellView::Flagged => ctx.set_fill_style(&"blue".into()),
-        minesweep_core::CellView::Questioned => ctx.set_fill_style(&"magenta".into()),
-        minesweep_core::CellView::Opened(_) => ctx.set_fill_style(&"green".into()),
-        minesweep_core::CellView::Mine => ctx.set_fill_style(&"orange".into()),
-        minesweep_core::CellView::WrongMine => ctx.set_fill_style(&"yellow".into()),
-        minesweep_core::CellView::Exploded => ctx.set_fill_style(&"red".into()),
+        CellView::Unopened => {
+            ctx.set_fill_style(&"#ccc".into());
+            ctx.fill_rect(x, y, w, h);
+        }
+        CellView::Hovered => {
+            ctx.set_fill_style(&"#ddd".into());
+            ctx.fill_rect(x, y, w, h);
+        }
+        CellView::Pushed => {
+            ctx.set_fill_style(&"#aaa".into());
+            ctx.fill_rect(x, y, w, h);
+        }
+        _ => {
+            let image = match cell {
+                CellView::Flagged => &images.flag,
+                CellView::Questioned => &images.question,
+                CellView::Opened(n) => &images.numbers[n as usize],
+                CellView::Mine => &images.mine,
+                CellView::WrongMine => &images.wrong_mine,
+                CellView::Exploded => &images.explosion,
+                _ => unreachable!(),
+            };
+            ctx.draw_image_with_html_image_element_and_dw_and_dh(image, x, y, w, h)
+                .unwrap();
+        }
     }
-    ctx.fill_rect(
-        x as f64 * (t.cell_size() + t.cell_gap()),
-        y as f64 * (t.cell_size() + t.cell_gap()),
-        t.cell_size(),
-        t.cell_size(),
-    );
 }
 
 fn ray_cast(t: &Transform, view: &GameView, mouse_x: f64, mouse_y: f64) -> Option<(usize, usize)> {
@@ -117,6 +154,33 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
         origin_y: 0.,
         scale: 1.,
     });
+    let images: Images = {
+        let mut numbers = Vec::new();
+        numbers.push(HtmlImageElement::new().unwrap());
+        for n in 1..9 {
+            let number = HtmlImageElement::new().unwrap();
+            number.set_src(&format!("/public/{n}.svg"));
+            numbers.push(number)
+        }
+        let flag = HtmlImageElement::new().unwrap();
+        flag.set_src("/public/flag.svg");
+        let question = HtmlImageElement::new().unwrap();
+        question.set_src("/public/question.svg");
+        let mine = HtmlImageElement::new().unwrap();
+        mine.set_src("/public/mine.svg");
+        let wrong_mine = HtmlImageElement::new().unwrap();
+        wrong_mine.set_src("/public/wrong_mine.svg");
+        let explosion = HtmlImageElement::new().unwrap();
+        explosion.set_src("/public/explosion.svg");
+        Images {
+            numbers,
+            flag,
+            question,
+            mine,
+            wrong_mine,
+            explosion,
+        }
+    };
     let UseWindowSizeReturn { width, height } = use_window_size();
     create_effect(move |_| {
         let canvas = canvas().unwrap();
@@ -132,11 +196,12 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
         y: mouse_y,
         ..
     } = use_mouse();
-    let (mouse_down, set_mouse_down) = create_signal(false);
+    let (mouse_down, set_mouse_down) = create_signal(None);
+    let (hover, set_hover) = create_signal(None::<(usize, usize)>);
     let (offset_x, set_offset_x) = create_signal(0f64);
     let (offset_y, set_offset_y) = create_signal(0f64);
     create_effect(move |_| {
-        if !mouse_down() {
+        if mouse_down() != Some(0) {
             return;
         }
         set_transform.update(|t| {
@@ -145,7 +210,45 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
         });
     });
     let _ = use_event_listener(document(), mouseup, move |_| {
-        set_mouse_down(false);
+        log!("up: {:?}", mouse_down());
+        match (mouse_down(), hover()) {
+            (Some(0), Some((x, y))) => {
+                view.update(|view| view.left_click(x, y));
+            }
+            (Some(1), Some((x, y))) => {
+                view.update(|view| view.middle_click(x, y));
+            }
+            (Some(2), Some((x, y))) => {
+                view.update(|view| view.right_click(x, y));
+            }
+            _ => {}
+        }
+        set_mouse_down(None);
+    });
+    let _ = use_event_listener(document(), mousemove, move |ev| {
+        log!("move: {}, {}", mouse_x(), mouse_y());
+        if let Some((x, y)) = ray_cast(&transform(), &view(), mouse_x(), mouse_y()) {
+            if hover() != Some((x, y)) {
+                log!("hover: {}, {}", x, y);
+                set_hover(Some((x, y)));
+                view.update(|view| view.gesture(Gesture::Hover(x, y)));
+            }
+        } else {
+            set_hover(None);
+            view.update(|view| view.gesture(Gesture::None));
+        }
+    });
+    create_effect(move |_| match (mouse_down(), hover()) {
+        (None, Some((x, y))) => {
+            view.update(|view| view.gesture(Gesture::Hover(x, y)));
+        }
+        (Some(0 | 2), Some((x, y))) => {
+            view.update(|view| view.gesture(Gesture::LeftOrRightPush(x, y)));
+        }
+        (Some(1), Some((x, y))) => {
+            view.update(|view| view.gesture(Gesture::MidPush(x, y)));
+        }
+        _ => {}
     });
     create_effect(move |_| {
         width.track();
@@ -159,7 +262,7 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
         clear(&ctx, &canvas);
-        draw_game_view(&ctx, &transform(), &view());
+        draw_game_view(&ctx, &images, &transform(), &view());
     });
     let (class_name, style_val) = style_str! {
         canvas {
@@ -171,57 +274,17 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
     view! {
         class = class_name,
         <Style> { style_val } </Style>
-        <canvas ref=canvas on:click=move |ev| {
-            if let Some((x, y)) = ray_cast(
-                &transform(),
-                &view(),
-                mouse_x(),
-                mouse_y(),
-            ) {
-                view.update(|view| view.left_click(x, y));
-                ev.prevent_default();
-            }
-        } on:auxclick=move |ev| {
-            log!("button: {}", ev.button());
-            if let Some((x, y)) = ray_cast(
-                &transform(),
-                &view(),
-                mouse_x(),
-                mouse_y(),
-            ) {
-                match ev.button() {
-                    1 => view.update(|view| view.middle_click(x, y)),
-                    2 => view.update(|view| view.right_click(x, y)),
-                    _ => {}
-                }
-                ev.prevent_default();
-            }
-        } on:contextmenu=move |ev| {
-            if ray_cast(
-                &transform(),
-                &view(),
-                mouse_x(),
-                mouse_y(),
-            ).is_some() {
-                ev.prevent_default();
-            }
+        <canvas ref=canvas on:contextmenu=move |ev| {
+            ev.prevent_default();
         } on:mousedown=move |ev| {
-            if ev.button() != 0 {
-                return;
+            log!("down: {}", ev.button());
+            if ev.button() == 0 && hover().is_none() {
+                set_offset_x(mouse_x() - transform().origin_x);
+                set_offset_y(mouse_y() - transform().origin_y);
             }
-            let None = ray_cast(
-                &transform(),
-                &view(),
-                mouse_x(),
-                mouse_y(),
-            ) else {
-                return;
-            };
-            set_offset_x(mouse_x() - transform().origin_x);
-            set_offset_y(mouse_y() - transform().origin_y);
-            set_mouse_down(true);
+            set_mouse_down(Some(ev.button()));
         } on:wheel=move |ev| {
-            set_transform.update(|t| t.scale(ev.delta_y()));
+            set_transform.update(|t| t.scale(mouse_x(), mouse_y(), ev.delta_y()));
         }> "Canvas required." </canvas>
     }
 }

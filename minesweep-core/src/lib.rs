@@ -128,9 +128,17 @@ impl GameState {
 
     pub fn nearby_mines(&self, x: usize, y: usize) -> u8 {
         let mut nearby_mines = 0;
+        let x = x as i32;
+        let y = y as i32;
         for y1 in [y - 1, y, y + 1] {
+            if y1 < 0 || y1 >= self.height() as i32 {
+                continue;
+            }
             for x1 in [x - 1, x, x + 1] {
-                if (!(x1 == x && y1 == y)) && self.is_mine(x1, y1) {
+                if x1 < 0 || x1 >= self.width() as i32 {
+                    continue;
+                }
+                if (!(x1 == x && y1 == y)) && self.is_mine(x1 as usize, y1 as usize) {
                     nearby_mines += 1;
                 }
             }
@@ -144,9 +152,17 @@ impl GameState {
 
     pub fn nearby_flags(&self, x: usize, y: usize) -> u8 {
         let mut nearby_flags = 0;
+        let x = x as i32;
+        let y = y as i32;
         for y1 in [y - 1, y, y + 1] {
+            if y1 < 0 || y1 >= self.height() as i32 {
+                continue;
+            }
             for x1 in [x - 1, x, x + 1] {
-                if (!(x1 == x && y1 == y)) && self.is_flag(x1, y1) {
+                if x1 < 0 || x1 >= self.width() as i32 {
+                    continue;
+                }
+                if (!(x1 == x && y1 == y)) && self.is_flag(x1 as usize, y1 as usize) {
                     nearby_flags += 1;
                 }
             }
@@ -185,6 +201,8 @@ impl GameState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CellView {
     Unopened,
+    Hovered,
+    Pushed,
     Flagged,
     Questioned,
     Opened(u8),
@@ -193,11 +211,20 @@ pub enum CellView {
     Exploded,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Gesture {
+    Hover(usize, usize),
+    LeftOrRightPush(usize, usize),
+    MidPush(usize, usize),
+    None,
+}
+
 #[derive(Debug, Clone)]
 pub struct GameView {
     pub state: GameState,
     pub cells: Vec<Vec<CellView>>,
     pub result: GameResult,
+    pub gesture: Gesture,
 }
 
 impl From<GameState> for GameView {
@@ -210,6 +237,7 @@ impl From<GameState> for GameView {
             state,
             cells,
             result,
+            gesture: Gesture::None,
         };
         this.refresh_game_result();
         this.refresh_all_cell();
@@ -269,6 +297,24 @@ impl GameView {
             (Playing, false, CellState::Questioned) => Questioned,
             (Playing, false, CellState::Opened) => Opened(self.state.nearby_mines(x, y)),
         };
+        let cell_view = if self.result == Playing && cell_view == Unopened {
+            match self.gesture {
+                Gesture::Hover(x0, y0) if x == x0 && y == y0 => Hovered,
+                Gesture::LeftOrRightPush(x0, y0) if x == x0 && y == y0 => Pushed,
+                Gesture::MidPush(x0, y0) if x == x0 && y == y0 => Hovered,
+                Gesture::MidPush(x0, y0)
+                    if x as i32 - 1 <= x0 as i32
+                        && x0 <= x + 1
+                        && y as i32 - 1 <= y0 as i32
+                        && y0 <= y + 1 =>
+                {
+                    Pushed
+                }
+                _ => Unopened,
+            }
+        } else {
+            cell_view
+        };
         self.cells[y][x] = cell_view;
     }
 
@@ -291,10 +337,18 @@ impl GameView {
                     self.state.set_cell_state(x, y, Opened);
                     self.refresh_cell(x, y);
                     if self.state.nearby_mines(x, y) == 0 {
+                        let x = x as i32;
+                        let y = y as i32;
                         for y1 in [y - 1, y, y + 1] {
+                            if y1 < 0 || y1 >= self.height() as i32 {
+                                continue;
+                            }
                             for x1 in [x - 1, x, x + 1] {
+                                if x1 < 0 || x1 >= self.width() as i32 {
+                                    continue;
+                                }
                                 if !(x1 == x && y1 == y) {
-                                    cells_to_left_click.insert((x1, y1));
+                                    cells_to_left_click.insert((x1 as usize, y1 as usize));
                                 }
                             }
                         }
@@ -333,11 +387,21 @@ impl GameView {
             return;
         }
         if self.state.nearby_mines(x, y) == self.state.nearby_flags(x, y) {
+            let x = x as i32;
+            let y = y as i32;
             for y1 in [y - 1, y, y + 1] {
+                if y1 < 0 || y1 >= self.height() as i32 {
+                    continue;
+                }
                 for x1 in [x - 1, x, x + 1] {
-                    if (!(x1 == x && y1 == y)) && self.state.cell_state(x, y) == Unopened {
-                        self.state.set_cell_state(x, y, Opened);
-                        self.refresh_cell(x, y);
+                    if x1 < 0 || x1 >= self.width() as i32 {
+                        continue;
+                    }
+                    if (!(x1 == x && y1 == y))
+                        && self.state.cell_state(x1 as usize, y1 as usize) == Unopened
+                    {
+                        self.state.set_cell_state(x1 as usize, y1 as usize, Opened);
+                        self.refresh_cell(x1 as usize, y1 as usize);
                     }
                 }
             }
@@ -346,6 +410,11 @@ impl GameView {
         if self.result != GameResult::Playing {
             self.refresh_all_cell();
         }
+    }
+
+    pub fn gesture(&mut self, gesture: Gesture) {
+        self.gesture = gesture;
+        self.refresh_all_cell();
     }
 
     pub fn iter(&self) -> GameViewIter {

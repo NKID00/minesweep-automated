@@ -1,4 +1,11 @@
-use std::fmt::Display;
+mod solver;
+use solver::solve;
+pub use solver::Model;
+
+use std::{
+    fmt::Display,
+    ops::{BitAnd, BitOr, BitXor},
+};
 
 #[derive(Debug, Clone)]
 pub enum Formula {
@@ -183,6 +190,12 @@ impl Formula {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cnf(Vec<Clause>);
 
+impl Cnf {
+    pub fn solve(&self) -> Model {
+        solve(self.clone())
+    }
+}
+
 impl Display for Cnf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.is_empty() {
@@ -214,7 +227,7 @@ impl Display for Clause {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Literal {
     variable: Variable,
     polarity: Polarity,
@@ -253,7 +266,7 @@ impl Display for Literal {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Variable(pub usize);
 
 impl Variable {
@@ -274,7 +287,7 @@ impl From<usize> for Variable {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Polarity {
     Positive,
     Negative,
@@ -286,6 +299,53 @@ impl Polarity {
         match self {
             Positive => Negative,
             Negative => Positive,
+        }
+    }
+}
+
+impl BitAnd for Polarity {
+    type Output = Polarity;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        use Polarity::*;
+        match (self, rhs) {
+            (Positive, Positive) => Positive,
+            _ => Negative,
+        }
+    }
+}
+
+impl BitOr for Polarity {
+    type Output = Polarity;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        use Polarity::*;
+        match (self, rhs) {
+            (Negative, Negative) => Negative,
+            _ => Positive,
+        }
+    }
+}
+
+impl BitXor for Polarity {
+    type Output = Polarity;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        use Polarity::*;
+        if self != rhs {
+            Positive
+        } else {
+            Negative
+        }
+    }
+}
+
+impl Display for Polarity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Polarity::*;
+        match self {
+            Positive => write!(f, "1"),
+            Negative => write!(f, "0"),
         }
     }
 }
@@ -321,5 +381,7 @@ mod tests {
         assert_eq!(f.maximum_variable(), 5.into());
         let cnf = f.tseitin_encode();
         println!("{cnf}");
+        let model = cnf.solve();
+        println!("{model}");
     }
 }
