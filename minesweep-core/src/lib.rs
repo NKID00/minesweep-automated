@@ -1,4 +1,7 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    ops::{Deref, DerefMut},
+};
 
 use rand::{
     seq::{IteratorRandom, SliceRandom},
@@ -274,6 +277,33 @@ impl From<GameState> for GameView {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RedrawCells(pub Vec<(usize, usize)>);
+
+impl RedrawCells {
+    pub fn redraw_all(view: &GameView) -> Self {
+        Self(
+            (0..view.height())
+                .flat_map(|y| (0..view.width()).map(|x| (x, y)).collect::<Vec<_>>())
+                .collect(),
+        )
+    }
+}
+
+impl Deref for RedrawCells {
+    type Target = Vec<(usize, usize)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for RedrawCells {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl GameView {
     pub fn width(&self) -> usize {
         self.state.width()
@@ -287,15 +317,18 @@ impl GameView {
         self.result = self.state.game_result();
     }
 
-    fn refresh_all_cell(&mut self) {
+    fn refresh_all_cell(&mut self) -> RedrawCells {
+        let mut redraw = Vec::new();
         for y in 0..self.state.height() {
             for x in 0..self.state.width() {
-                self.refresh_cell(x, y);
+                redraw.extend(self.refresh_cell(x, y).0);
             }
         }
+        RedrawCells(redraw)
     }
 
-    fn refresh_3x3_cell(&mut self, x: usize, y: usize) {
+    fn refresh_3x3_cell(&mut self, x: usize, y: usize) -> RedrawCells {
+        let mut redraw = Vec::new();
         let x = x as i32;
         let y = y as i32;
         for y1 in [y - 1, y, y + 1] {
@@ -306,23 +339,24 @@ impl GameView {
                 if x1 < 0 || x1 >= self.width() as i32 {
                     continue;
                 }
-                self.refresh_cell(x1 as usize, y1 as usize);
+                redraw.extend(self.refresh_cell(x1 as usize, y1 as usize).0);
             }
         }
+        RedrawCells(redraw)
     }
 
-    fn refresh_gesture(&mut self, gesture: Gesture) {
+    fn refresh_gesture(&mut self, gesture: Gesture) -> RedrawCells {
         match gesture {
-            Gesture::Hover(x, y) | Gesture::LeftOrRightPush(x, y) | Gesture::MidPush(x, y) => {
-                self.refresh_3x3_cell(x, y);
-            }
-            Gesture::None => {}
+            Gesture::Hover(x, y) | Gesture::LeftOrRightPush(x, y) => self.refresh_cell(x, y),
+            Gesture::MidPush(x, y) => self.refresh_3x3_cell(x, y),
+            Gesture::None => Default::default(),
         }
     }
 
-    fn refresh_cell(&mut self, x: usize, y: usize) {
+    fn refresh_cell(&mut self, x: usize, y: usize) -> RedrawCells {
         use CellView::*;
         use GameResult::*;
+        let previous_cell_view = self.cells[y][x];
         let cell_view = match (
             self.result,
             self.state.is_mine(x, y),
@@ -370,15 +404,21 @@ impl GameView {
             cell_view
         };
         self.cells[y][x] = cell_view;
+        if previous_cell_view != cell_view {
+            RedrawCells(vec![(x, y)])
+        } else {
+            Default::default()
+        }
     }
 
-    pub fn left_click(&mut self, x: usize, y: usize) {
+    pub fn left_click(&mut self, x: usize, y: usize) -> RedrawCells {
+        let mut redraw = Vec::new();
         if self.result != GameResult::Playing {
-            return;
+            return Default::default();
         }
         use CellState::*;
         if self.state.cell_state(x, y) != Unopened {
-            return;
+            return Default::default();
         }
         if self.state.is_mine(x, y) {
             self.state.set_cell_state(x, y, Opened);
@@ -389,7 +429,7 @@ impl GameView {
                 let (x, y) = cell;
                 if self.state.cell_state(x, y) == Unopened {
                     self.state.set_cell_state(x, y, Opened);
-                    self.refresh_cell(x, y);
+                    redraw.extend(self.refresh_cell(x, y).0);
                     if self.state.nearby_mines(x, y) == 0 {
                         let x = x as i32;
                         let y = y as i32;
@@ -412,13 +452,14 @@ impl GameView {
         }
         self.refresh_game_result();
         if self.result != GameResult::Playing {
-            self.refresh_all_cell();
+            redraw.extend(self.refresh_all_cell().0)
         }
+        RedrawCells(redraw)
     }
 
-    pub fn right_click(&mut self, x: usize, y: usize) {
+    pub fn right_click(&mut self, x: usize, y: usize) -> RedrawCells {
         if self.result != GameResult::Playing {
-            return;
+            return Default::default();
         }
         use CellState::*;
         let cell_state = self.state.cell_state(x, y);
@@ -432,21 +473,21 @@ impl GameView {
                 Questioned
             }
             Questioned => Unopened,
-            Opened => return,
+            Opened => return Default::default(),
         };
         self.state.set_cell_state(x, y, new_cell_state);
-        self.refresh_cell(x, y);
+        self.refresh_cell(x, y)
     }
 
-    pub fn middle_click(&mut self, x: usize, y: usize) {
+    pub fn middle_click(&mut self, x: usize, y: usize) -> RedrawCells {
         if self.result != GameResult::Playing {
-            return;
+            return Default::default();
         }
         use CellState::*;
         if self.state.cell_state(x, y) != Opened
             || self.state.nearby_mines(x, y) != self.state.nearby_flags(x, y)
         {
-            return;
+            return Default::default();
         }
         let x = x as i32;
         let y = y as i32;
@@ -467,32 +508,27 @@ impl GameView {
         }
         self.refresh_game_result();
         if self.result != GameResult::Playing {
-            self.refresh_all_cell();
+            self.refresh_all_cell()
         } else {
-            self.refresh_3x3_cell(x as usize, y as usize);
+            self.refresh_3x3_cell(x as usize, y as usize)
         }
     }
-    pub fn gesture(&mut self, gesture: Gesture) {
+
+    pub fn gesture(&mut self, gesture: Gesture) -> RedrawCells {
         let previous_gesture = self.gesture;
         self.gesture = gesture;
-        self.refresh_gesture(previous_gesture);
-        self.refresh_gesture(gesture);
+        let mut redraw = self.refresh_gesture(previous_gesture);
+        redraw.0.extend(self.refresh_gesture(gesture).0);
+        redraw
     }
 
     pub fn is_draggable(&self, x: usize, y: usize) -> bool {
         match self.result {
             GameResult::Win | GameResult::Lose => true,
-            GameResult::Playing => matches!(self.cells[y][x], CellView::Opened(_)),
-        }
-    }
-
-    pub fn iter(&self) -> GameViewIter {
-        GameViewIter {
-            game_view: self,
-            width: self.state.width(),
-            height: self.state.height(),
-            x: 0,
-            y: 0,
+            GameResult::Playing => matches!(
+                self.cells[y][x],
+                CellView::Opened(_) | CellView::Flagged | CellView::Questioned
+            ),
         }
     }
 }

@@ -12,12 +12,17 @@ use stylers::style_str;
 use wasm_bindgen::{prelude::*, JsValue};
 use web_sys::{CanvasRenderingContext2d, HtmlDivElement, HtmlImageElement};
 
-use minesweep_core::{CellView, GameOptions, GameView, Gesture};
+use minesweep_core::{CellView, GameOptions, GameView, Gesture, RedrawCells};
 
+const INITIAL_SCALE: f64 = 1.;
 const SCALE_FACTOR: f64 = 1.1;
 const PADDING: f64 = 20.;
 const CELL_SIZE: f64 = 50.;
-const CELL_GAP: f64 = 10.;
+const CELL_GAP: f64 = 2.;
+
+fn timestamp() -> f64 {
+    window().performance().unwrap().now() as f64 / 1000.
+}
 
 #[derive(Debug, Clone)]
 struct Transform {
@@ -27,14 +32,22 @@ struct Transform {
 }
 
 impl Transform {
-    fn scale(&mut self, scale_origin_x: f64, scale_origin_y: f64, wheel: f64) {
+    fn wheel(&mut self, scale_origin_x: f64, scale_origin_y: f64, wheel: f64) {
+        self.scale(
+            scale_origin_x,
+            scale_origin_y,
+            match wheel.signum() {
+                1. => 1. / SCALE_FACTOR,
+                -1. => SCALE_FACTOR,
+                _ => unreachable!(),
+            },
+        );
+    }
+
+    fn scale(&mut self, scale_origin_x: f64, scale_origin_y: f64, scale: f64) {
         let before = self.scale;
-        match wheel.signum() {
-            1. => self.scale /= SCALE_FACTOR,
-            -1. => self.scale *= SCALE_FACTOR,
-            _ => unreachable!(),
-        }
-        self.scale = self.scale.clamp(0.015, 1.5);
+        self.scale *= scale;
+        self.scale = self.scale.clamp(0.1, 1.);
         let scale = self.scale / before;
         self.origin_x += (self.origin_x - scale_origin_x) * (scale - 1.);
         self.origin_y += (self.origin_y - scale_origin_y) * (scale - 1.);
@@ -62,8 +75,7 @@ fn map_pixel_size_with_padding(view: &GameView) -> (f64, f64) {
     )
 }
 
-fn draw_game_view(ctx: &CanvasRenderingContext2d, images: &Images, view: &GameView) {
-    ctx.save();
+fn init_view(ctx: &CanvasRenderingContext2d, images: &Images, view: &GameView) {
     let (w_pixels, h_pixels) = map_pixel_size(view);
     ctx.set_stroke_style(&"#777".into());
     ctx.set_line_width(2.);
@@ -73,10 +85,20 @@ fn draw_game_view(ctx: &CanvasRenderingContext2d, images: &Images, view: &GameVi
         w_pixels + PADDING,
         h_pixels + PADDING,
     );
-    for (x, y, cell) in view.iter() {
-        draw_cell(ctx, images, cell, x, y);
+    for (x, y) in RedrawCells::redraw_all(view).iter() {
+        redraw_cell(ctx, images, view.cells[*y][*x], *x, *y);
     }
-    ctx.restore();
+}
+
+fn redraw_view(
+    ctx: &CanvasRenderingContext2d,
+    images: &Images,
+    view: &GameView,
+    redraw: &RedrawCells,
+) {
+    for (x, y) in redraw.iter() {
+        redraw_cell(ctx, images, view.cells[*y][*x], *x, *y);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +111,13 @@ struct Images {
     explosion: HtmlImageElement,
 }
 
-fn draw_cell(ctx: &CanvasRenderingContext2d, images: &Images, cell: CellView, x: usize, y: usize) {
+fn redraw_cell(
+    ctx: &CanvasRenderingContext2d,
+    images: &Images,
+    cell: CellView,
+    x: usize,
+    y: usize,
+) {
     let x = x as f64 * (CELL_SIZE + CELL_GAP) + PADDING;
     let y = y as f64 * (CELL_SIZE + CELL_GAP) + PADDING;
     let w = CELL_SIZE;
@@ -102,19 +130,26 @@ fn draw_cell(ctx: &CanvasRenderingContext2d, images: &Images, cell: CellView, x:
         h + CELL_GAP,
     );
     match cell {
-        CellView::Unopened => {
-            ctx.set_fill_style(&"#ddd".into());
-            ctx.fill_rect(x, y, w, h);
-        }
-        CellView::Hovered => {
-            ctx.set_fill_style(&"#eee".into());
-            ctx.fill_rect(x, y, w, h);
-        }
-        CellView::Pushed => {
-            ctx.set_fill_style(&"#ccc".into());
+        CellView::Unopened | CellView::Hovered | CellView::Pushed => {
+            match cell {
+                CellView::Unopened => ctx.set_fill_style(&"#f0f0f0".into()),
+                CellView::Hovered => ctx.set_fill_style(&"#f3f3f3".into()),
+                CellView::Pushed => ctx.set_fill_style(&"#e0e0e0".into()),
+                _ => unreachable!(),
+            }
             ctx.fill_rect(x, y, w, h);
         }
         _ => {
+            match cell {
+                CellView::Flagged => ctx.set_fill_style(&"#f0f0f0".into()),
+                CellView::Questioned => ctx.set_fill_style(&"#f0f0f0".into()),
+                CellView::Opened(_) => ctx.set_fill_style(&"white".into()),
+                CellView::Mine => ctx.set_fill_style(&"white".into()),
+                CellView::WrongMine => ctx.set_fill_style(&"white".into()),
+                CellView::Exploded => ctx.set_fill_style(&"white".into()),
+                _ => unreachable!(),
+            }
+            ctx.fill_rect(x, y, w, h);
             let image = match cell {
                 CellView::Flagged => &images.flag,
                 CellView::Questioned => &images.question,
@@ -133,13 +168,11 @@ fn draw_cell(ctx: &CanvasRenderingContext2d, images: &Images, cell: CellView, x:
 fn ray_cast(t: &Transform, view: &GameView, mouse_x: f64, mouse_y: f64) -> Option<(usize, usize)> {
     let w = view.width();
     let h = view.height();
-    let (w_pixels, h_pixels) = map_pixel_size_with_padding(view);
-    let x = (mouse_x - t.origin_x) / t.scale;
-    let y = (mouse_y - t.origin_y) / t.scale;
+    let (w_pixels, h_pixels) = map_pixel_size(view);
+    let x = (mouse_x - t.origin_x) / t.scale - PADDING;
+    let y = (mouse_y - t.origin_y) / t.scale - PADDING;
     // inside map && inside cell
     if 0. <= x && x <= w_pixels && 0. <= y && y <= h_pixels {
-        let x = x - PADDING;
-        let y = y - PADDING;
         if x % (CELL_SIZE + CELL_GAP) <= CELL_SIZE && y % (CELL_SIZE + CELL_GAP) <= CELL_SIZE {
             Some((
                 (x / (CELL_SIZE + CELL_GAP))
@@ -196,25 +229,31 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
 
     let UseWindowSizeReturn { width, height } = use_window_size();
     // initialize canvas and transform
-    create_effect(move |_| {
-        let canvas = canvas().unwrap();
-        let view = view.get_untracked();
-        let (w_pixels, h_pixels) = map_pixel_size_with_padding(&view);
-        canvas.set_width(w_pixels as u32);
-        canvas.set_height(h_pixels as u32);
-        let options = Object::new();
-        Reflect::set(&options, &"alpha".into(), &JsValue::FALSE).unwrap();
-        let ctx = canvas
-            .get_context_with_context_options("2d", &options)
-            .unwrap()
-            .unwrap()
-            .dyn_into::<CanvasRenderingContext2d>()
-            .unwrap();
-        clear(&ctx, &canvas);
-        update!(|transform| {
-            transform.origin_x = width.get_untracked() / 2. - w_pixels / 2.;
-            transform.origin_y = height.get_untracked() / 2. - h_pixels / 2.;
-        })
+    create_effect({
+        let images = images.clone();
+        move |_| {
+            let begin = timestamp();
+            let canvas = canvas().unwrap();
+            let (w_pixels, h_pixels) = view.with_untracked(map_pixel_size_with_padding);
+            canvas.set_width(w_pixels as u32);
+            canvas.set_height(h_pixels as u32);
+            let options = Object::new();
+            Reflect::set(&options, &"alpha".into(), &JsValue::FALSE).unwrap();
+            let ctx = canvas
+                .get_context_with_context_options("2d", &options)
+                .unwrap()
+                .unwrap()
+                .dyn_into::<CanvasRenderingContext2d>()
+                .unwrap();
+            clear(&ctx, &canvas);
+            update!(|transform| {
+                transform.origin_x = (width.get_untracked() / 2. - w_pixels / 2.) * INITIAL_SCALE;
+                transform.origin_y = (height.get_untracked() / 2. - h_pixels / 2.) * INITIAL_SCALE;
+                transform.scale = INITIAL_SCALE;
+            });
+            view.with_untracked(|view| init_view(&ctx, &images, view));
+            log!("init took {:.3}s", timestamp() - begin);
+        }
     });
 
     let UseMouseReturn {
@@ -238,18 +277,25 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
         });
     });
 
+    let redraw: RwSignal<RedrawCells> = create_rw_signal(Default::default());
+
     // mouse event listener
     let _ = use_event_listener(document(), mouseup, move |_| {
-        log!("up: {:?}", mouse_down());
         match (mouse_down(), hover()) {
             (Some(0), Some((x, y))) => {
-                update!(|view| view.left_click(x, y));
+                let mut next_redraw = Default::default();
+                update!(|view| next_redraw = view.left_click(x, y));
+                redraw.set(next_redraw);
             }
             (Some(1), Some((x, y))) => {
-                update!(|view| view.middle_click(x, y));
+                let mut next_redraw = Default::default();
+                update!(|view| next_redraw = view.middle_click(x, y));
+                redraw.set(next_redraw);
             }
             (Some(2), Some((x, y))) => {
-                update!(|view| view.right_click(x, y));
+                let mut next_redraw = Default::default();
+                update!(|view| next_redraw = view.right_click(x, y));
+                redraw.set(next_redraw);
             }
             _ => {}
         }
@@ -258,32 +304,40 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
         set_mouse_down(None);
     });
     let _ = use_event_listener(document(), mousemove, move |_| {
-        log!("move: {}, {}", mouse_x(), mouse_y());
         let ray_cast_result =
             with!(|transform, view| ray_cast(transform, view, mouse_x(), mouse_y()));
         if let Some((x, y)) = ray_cast_result {
             if hover() != Some((x, y)) {
-                log!("hover: {}, {}", x, y);
                 set_hover(Some((x, y)));
-                update!(|view| view.gesture(Gesture::Hover(x, y)));
             }
         } else if hover().is_some() {
             set_hover(None);
-            update!(|view| view.gesture(Gesture::None));
         }
     });
 
     // update hover
     create_effect(move |_| match (mouse_down(), hover()) {
+        (_, None) => {
+            let mut next_redraw = Default::default();
+            update!(|view| next_redraw = view.gesture(Gesture::None));
+            redraw.set(next_redraw);
+        }
         (None, Some((x, y))) => {
-            update!(|view| view.gesture(Gesture::Hover(x, y)));
+            let mut next_redraw = Default::default();
+            update!(|view| next_redraw = view.gesture(Gesture::Hover(x, y)));
+            redraw.set(next_redraw);
         }
         (Some(0 | 2), Some((x, y))) => {
-            update!(|view| view.gesture(Gesture::LeftOrRightPush(x, y)));
+            let mut redraw_1 = Default::default();
+            update!(|view| redraw_1 = view.gesture(Gesture::LeftOrRightPush(x, y)));
+            redraw.set(redraw_1);
         }
         (Some(1), Some((x, y))) => {
-            update!(|view| view.gesture(Gesture::MidPush(x, y)));
+            let mut redraw_1 = Default::default();
+            update!(|view| redraw_1 = view.gesture(Gesture::MidPush(x, y)));
+            redraw.set(redraw_1);
         }
+
         _ => {}
     });
 
@@ -291,7 +345,6 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
     create_effect(move |_| {
         let canvas = canvas().unwrap();
         let t = transform();
-        log!("transform: {t:?}");
         (*canvas)
             .style()
             .set_property(
@@ -306,17 +359,20 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
 
     // redraw
     create_effect(move |_| {
-        log!("redraw, bad");
-        let canvas = canvas().unwrap();
-        let options = Object::new();
-        Reflect::set(&options, &"alpha".into(), &JsValue::FALSE).unwrap();
-        let ctx = canvas
-            .get_context_with_context_options("2d", &options)
-            .unwrap()
-            .unwrap()
-            .dyn_into::<CanvasRenderingContext2d>()
-            .unwrap();
-        with!(|view| draw_game_view(&ctx, &images, view));
+        with!(|redraw| if !redraw.is_empty() {
+            let begin = timestamp();
+            let canvas = canvas().unwrap();
+            let options = Object::new();
+            Reflect::set(&options, &"alpha".into(), &JsValue::FALSE).unwrap();
+            let ctx = canvas
+                .get_context_with_context_options("2d", &options)
+                .unwrap()
+                .unwrap()
+                .dyn_into::<CanvasRenderingContext2d>()
+                .unwrap();
+            view.with_untracked(|view| redraw_view(&ctx, &images, view, redraw));
+            log!("redraw took {:.3}s", timestamp() - begin);
+        });
     });
 
     let (class_name, style_val) = style_str! {
@@ -342,7 +398,6 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
         <div on:contextmenu=move |ev| {
             ev.prevent_default();
         } on:mousedown=move |ev| {
-            log!("down: {}", ev.button());
             let hover = hover();
             if ev.button() == 0
                 && (hover.is_none()
@@ -353,7 +408,7 @@ pub fn Map(view: RwSignal<GameView>) -> impl IntoView {
             }
             set_mouse_down(Some(ev.button()));
         } on:wheel=move |ev| {
-            update!(|transform| transform.scale(mouse_x(), mouse_y(), ev.delta_y()));
+            update!(|transform| transform.wheel(mouse_x(), mouse_y(), ev.delta_y()));
         }>
             <canvas on:contextmenu=move |ev| {
                 ev.prevent_default();
@@ -452,9 +507,9 @@ pub fn Controls(view: RwSignal<GameView>) -> impl IntoView {
 pub fn App() -> impl IntoView {
     provide_meta_context();
     let options = GameOptions {
-        size: (200, 200),
+        size: (30, 30),
         safe_pos: None,
-        mines: 10,
+        mines: 200,
         seed: Some(1),
     };
     let state = options.build();
