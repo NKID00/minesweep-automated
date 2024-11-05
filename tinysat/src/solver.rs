@@ -19,14 +19,11 @@ impl Display for Model {
             Model::Satisfied(assignment) => {
                 write!(f, "sat \\left( ")?;
                 let mut iter = assignment.iter();
-                match iter.next() {
-                    Some((v, a)) => {
-                        write!(f, "{v} = {a}")?;
-                        for (v, a) in iter {
-                            write!(f, ", {v} = {a}")?;
-                        }
+                if let Some((v, a)) = iter.next() {
+                    write!(f, "{v} = {a}")?;
+                    for (v, a) in iter {
+                        write!(f, ", {v} = {a}")?;
                     }
-                    None => (),
                 }
                 write!(f, " \\right)")
             }
@@ -113,7 +110,7 @@ fn unit_propagation(mut cnf: Cnf) -> UnitPropagationResult {
     let mut implies = Assignment(HashMap::new());
     loop {
         for clause in cnf.0.iter() {
-            if clause.0.len() == 0 {
+            if clause.0.is_empty() {
                 return UnitPropagationResult::Unsatisfiable;
             }
             if clause.0.len() == 1 {
@@ -166,7 +163,7 @@ fn solve_rec(cnf: Cnf, mut variables: HashSet<Variable>) -> Model {
             match solve_rec(cnf, variables) {
                 Model::Satisfied(mut assignment) => {
                     assignment.insert(victim, Positive);
-                    assignment.extend(implies.0.into_iter());
+                    assignment.extend(implies.0);
                     return Model::Satisfied(assignment);
                 }
                 Model::Unsatisfiable => {}
@@ -189,7 +186,7 @@ fn solve_rec(cnf: Cnf, mut variables: HashSet<Variable>) -> Model {
             match solve(cnf) {
                 Model::Satisfied(mut assignment) => {
                     assignment.insert(victim, Negative);
-                    assignment.extend(implies.0.into_iter());
+                    assignment.extend(implies.0);
                     return Model::Satisfied(assignment);
                 }
                 Model::Unsatisfiable => {}

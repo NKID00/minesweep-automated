@@ -118,6 +118,30 @@ impl GameState {
         self.mines[y][x]
     }
 
+    pub fn mines(&self) -> usize {
+        let mut mines = 0;
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                if self.is_mine(x, y) {
+                    mines += 1;
+                }
+            }
+        }
+        mines
+    }
+
+    pub fn flags(&self) -> usize {
+        let mut flags = 0;
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                if self.is_flag(x, y) {
+                    flags += 1;
+                }
+            }
+        }
+        flags
+    }
+
     pub fn cell_state(&self, x: usize, y: usize) -> CellState {
         self.cells[y][x]
     }
@@ -225,6 +249,8 @@ pub struct GameView {
     pub cells: Vec<Vec<CellView>>,
     pub result: GameResult,
     pub gesture: Gesture,
+    pub mines: usize,
+    pub flags: usize,
 }
 
 impl From<GameState> for GameView {
@@ -233,11 +259,14 @@ impl From<GameState> for GameView {
         let cells = (0..state.height())
             .map(|_| (0..state.width()).map(|_| CellView::Unopened).collect())
             .collect();
+        let mines = state.mines();
         let mut this = Self {
             state,
             cells,
             result,
             gesture: Gesture::None,
+            mines,
+            flags: 0,
         };
         this.refresh_game_result();
         this.refresh_all_cell();
@@ -263,6 +292,31 @@ impl GameView {
             for x in 0..self.state.width() {
                 self.refresh_cell(x, y);
             }
+        }
+    }
+
+    fn refresh_3x3_cell(&mut self, x: usize, y: usize) {
+        let x = x as i32;
+        let y = y as i32;
+        for y1 in [y - 1, y, y + 1] {
+            if y1 < 0 || y1 >= self.height() as i32 {
+                continue;
+            }
+            for x1 in [x - 1, x, x + 1] {
+                if x1 < 0 || x1 >= self.width() as i32 {
+                    continue;
+                }
+                self.refresh_cell(x1 as usize, y1 as usize);
+            }
+        }
+    }
+
+    fn refresh_gesture(&mut self, gesture: Gesture) {
+        match gesture {
+            Gesture::Hover(x, y) | Gesture::LeftOrRightPush(x, y) | Gesture::MidPush(x, y) => {
+                self.refresh_3x3_cell(x, y);
+            }
+            Gesture::None => {}
         }
     }
 
@@ -369,8 +423,14 @@ impl GameView {
         use CellState::*;
         let cell_state = self.state.cell_state(x, y);
         let new_cell_state = match cell_state {
-            Unopened => Flagged,
-            Flagged => Questioned,
+            Unopened => {
+                self.flags += 1;
+                Flagged
+            }
+            Flagged => {
+                self.flags -= 1;
+                Questioned
+            }
             Questioned => Unopened,
             Opened => return,
         };
@@ -383,38 +443,47 @@ impl GameView {
             return;
         }
         use CellState::*;
-        if self.state.cell_state(x, y) != Opened {
+        if self.state.cell_state(x, y) != Opened
+            || self.state.nearby_mines(x, y) != self.state.nearby_flags(x, y)
+        {
             return;
         }
-        if self.state.nearby_mines(x, y) == self.state.nearby_flags(x, y) {
-            let x = x as i32;
-            let y = y as i32;
-            for y1 in [y - 1, y, y + 1] {
-                if y1 < 0 || y1 >= self.height() as i32 {
+        let x = x as i32;
+        let y = y as i32;
+        for y1 in [y - 1, y, y + 1] {
+            if y1 < 0 || y1 >= self.height() as i32 {
+                continue;
+            }
+            for x1 in [x - 1, x, x + 1] {
+                if x1 < 0 || x1 >= self.width() as i32 {
                     continue;
                 }
-                for x1 in [x - 1, x, x + 1] {
-                    if x1 < 0 || x1 >= self.width() as i32 {
-                        continue;
-                    }
-                    if (!(x1 == x && y1 == y))
-                        && self.state.cell_state(x1 as usize, y1 as usize) == Unopened
-                    {
-                        self.state.set_cell_state(x1 as usize, y1 as usize, Opened);
-                        self.refresh_cell(x1 as usize, y1 as usize);
-                    }
+                if (!(x1 == x && y1 == y))
+                    && self.state.cell_state(x1 as usize, y1 as usize) == Unopened
+                {
+                    self.state.set_cell_state(x1 as usize, y1 as usize, Opened);
                 }
             }
         }
         self.refresh_game_result();
         if self.result != GameResult::Playing {
             self.refresh_all_cell();
+        } else {
+            self.refresh_3x3_cell(x as usize, y as usize);
         }
     }
-
     pub fn gesture(&mut self, gesture: Gesture) {
+        let previous_gesture = self.gesture;
         self.gesture = gesture;
-        self.refresh_all_cell();
+        self.refresh_gesture(previous_gesture);
+        self.refresh_gesture(gesture);
+    }
+
+    pub fn is_draggable(&self, x: usize, y: usize) -> bool {
+        match self.result {
+            GameResult::Win | GameResult::Lose => true,
+            GameResult::Playing => matches!(self.cells[y][x], CellView::Opened(_)),
+        }
     }
 
     pub fn iter(&self) -> GameViewIter {
