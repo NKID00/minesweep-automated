@@ -5,15 +5,70 @@ use std::{
 
 use rand::{
     seq::{IteratorRandom, SliceRandom},
-    thread_rng, SeedableRng,
+    thread_rng, RngCore, SeedableRng,
 };
 use rand_chacha::ChaCha12Rng;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum Difficulty {
+    Easy,
+    Medium,
+    Hard,
+    Custom {
+        width: usize,
+        height: usize,
+        mines: usize,
+    },
+}
+
+impl Difficulty {
+    pub fn width(&self) -> usize {
+        use Difficulty::*;
+        match self {
+            Easy => 9,
+            Medium => 16,
+            Hard => 30,
+            Custom {
+                width,
+                height: _,
+                mines: _,
+            } => *width,
+        }
+    }
+
+    pub fn height(&self) -> usize {
+        use Difficulty::*;
+        match self {
+            Easy => 9,
+            Medium => 16,
+            Hard => 16,
+            Custom {
+                width: _,
+                height,
+                mines: _,
+            } => *height,
+        }
+    }
+
+    pub fn mines(&self) -> usize {
+        use Difficulty::*;
+        match self {
+            Easy => 10,
+            Medium => 40,
+            Hard => 99,
+            Custom {
+                width: _,
+                height: _,
+                mines,
+            } => *mines,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct GameOptions {
-    pub size: (usize, usize),
+    pub difficulty: Difficulty,
     pub safe_pos: Option<(usize, usize)>,
-    pub mines: usize,
     pub seed: Option<u64>,
 }
 
@@ -26,61 +81,63 @@ impl Default for GameOptions {
 impl GameOptions {
     pub fn easy() -> Self {
         Self {
-            size: (9, 9),
+            difficulty: Difficulty::Easy,
             safe_pos: None,
-            mines: 10,
             seed: None,
         }
     }
 
     pub fn medium() -> Self {
         Self {
-            size: (16, 16),
+            difficulty: Difficulty::Medium,
             safe_pos: None,
-            mines: 40,
             seed: None,
         }
     }
 
     pub fn hard() -> Self {
         Self {
-            size: (30, 16),
+            difficulty: Difficulty::Hard,
             safe_pos: None,
-            mines: 99,
             seed: None,
         }
     }
 
     /// Panics when width, height or mines is zero, or when every cell would be filled with mine
-    pub fn build(self) -> GameState {
-        let (w, h) = self.size;
-        if w < 1 || h < 1 || self.mines < 1 || w * h <= self.mines {
+    pub fn build(mut self) -> GameState {
+        let w = self.difficulty.width();
+        let h = self.difficulty.height();
+        let mines = self.difficulty.mines();
+        if w < 1 || h < 1 || mines < 1 || w * h <= mines {
             panic!(
                 "width, height and mines shouldn't be zero and at least one cell should be empty"
             )
         }
-        let mut rng = match self.seed {
-            Some(seed) => ChaCha12Rng::seed_from_u64(seed),
-            None => ChaCha12Rng::from_rng(thread_rng()).unwrap(),
+        let seed = match self.seed {
+            Some(seed) => seed,
+            None => thread_rng().next_u64(),
         };
-        let mut mines = (0..h)
+        self.seed = Some(seed);
+        let mut rng = ChaCha12Rng::seed_from_u64(seed);
+        let mut mines_pos = (0..h)
             .flat_map(|y| (0..w).map(move |x| (x, y)))
-            .choose_multiple(&mut rng, self.mines + 1);
+            .choose_multiple(&mut rng, mines + 1);
         if let Some(safe_pos) = self.safe_pos {
-            if let Some(p) = mines.iter().position(|&p| p == safe_pos) {
-                mines.remove(p);
+            if let Some(p) = mines_pos.iter().position(|&p| p == safe_pos) {
+                mines_pos.remove(p);
             }
         }
-        if mines.len() > self.mines {
-            mines.shuffle(&mut rng);
-            mines.pop();
+        if mines_pos.len() > mines {
+            mines_pos.shuffle(&mut rng);
+            mines_pos.pop();
         }
         use CellState::Unopened;
         let mut state = GameState {
+            options: self,
             mines: (0..h).map(|_| (0..w).map(|_| false).collect()).collect(),
             cells: (0..h).map(|_| (0..w).map(|_| Unopened).collect()).collect(),
         };
-        for (x, y) in mines {
+        for (x, y) in mines_pos {
             state.mines[y][x] = true;
         }
         state
@@ -97,8 +154,9 @@ pub enum CellState {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct GameState {
+    pub options: GameOptions,
     pub mines: Vec<Vec<bool>>,
-    pub cells: Vec<Vec<CellState>>,
+    cells: Vec<Vec<CellState>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
@@ -145,11 +203,11 @@ impl GameState {
         flags
     }
 
-    pub fn cell_state(&self, x: usize, y: usize) -> CellState {
+    pub fn cell(&self, x: usize, y: usize) -> CellState {
         self.cells[y][x]
     }
 
-    pub fn set_cell_state(&mut self, x: usize, y: usize, state: CellState) {
+    pub fn set_cell(&mut self, x: usize, y: usize, state: CellState) {
         self.cells[y][x] = state;
     }
 
@@ -174,7 +232,7 @@ impl GameState {
     }
 
     pub fn is_flag(&self, x: usize, y: usize) -> bool {
-        self.cells[y][x] == CellState::Flagged
+        self.cell(x, y) == CellState::Flagged
     }
 
     pub fn nearby_flags(&self, x: usize, y: usize) -> u8 {
@@ -198,7 +256,7 @@ impl GameState {
     }
 
     pub fn is_opened(&self, x: usize, y: usize) -> bool {
-        self.cells[y][x] == CellState::Opened
+        self.cell(x, y) == CellState::Opened
     }
 
     pub fn is_exploded(&self, x: usize, y: usize) -> bool {
@@ -248,8 +306,8 @@ pub enum Gesture {
 
 #[derive(Debug, Clone)]
 pub struct GameView {
-    pub state: GameState,
-    pub cells: Vec<Vec<CellView>>,
+    state: GameState,
+    cells: Vec<Vec<CellView>>,
     pub result: GameResult,
     pub gesture: Gesture,
     pub mines: usize,
@@ -281,10 +339,10 @@ impl From<GameState> for GameView {
 pub struct RedrawCells(pub Vec<(usize, usize)>);
 
 impl RedrawCells {
-    pub fn redraw_all(view: &GameView) -> Self {
+    pub fn redraw_all(w: usize, h: usize) -> Self {
         Self(
-            (0..view.height())
-                .flat_map(|y| (0..view.width()).map(|x| (x, y)).collect::<Vec<_>>())
+            (0..h)
+                .flat_map(|y| (0..w).map(|x| (x, y)).collect::<Vec<_>>())
                 .collect(),
         )
     }
@@ -305,16 +363,31 @@ impl DerefMut for RedrawCells {
 }
 
 impl GameView {
+    pub fn options(&self) -> GameOptions {
+        self.state.options.clone()
+    }
+
     pub fn width(&self) -> usize {
         self.state.width()
     }
 
     pub fn height(&self) -> usize {
-        self.state.width()
+        self.state.height()
+    }
+
+    pub fn cell(&self, x: usize, y: usize) -> CellView {
+        self.cells[y][x]
+    }
+
+    pub fn set_cell(&mut self, x: usize, y: usize, cell: CellView) {
+        self.cells[y][x] = cell;
     }
 
     fn refresh_game_result(&mut self) {
         self.result = self.state.game_result();
+        if self.result == GameResult::Win {
+            self.flags = self.mines;
+        }
     }
 
     fn refresh_all_cell(&mut self) -> RedrawCells {
@@ -356,12 +429,8 @@ impl GameView {
     fn refresh_cell(&mut self, x: usize, y: usize) -> RedrawCells {
         use CellView::*;
         use GameResult::*;
-        let previous_cell_view = self.cells[y][x];
-        let cell_view = match (
-            self.result,
-            self.state.is_mine(x, y),
-            self.state.cell_state(x, y),
-        ) {
+        let previous_cell_view = self.cell(x, y);
+        let cell_view = match (self.result, self.state.is_mine(x, y), self.state.cell(x, y)) {
             (Win, true, CellState::Unopened) => Flagged,
             (Win, true, CellState::Flagged) => Flagged,
             (Win, true, CellState::Questioned) => Flagged,
@@ -403,7 +472,7 @@ impl GameView {
         } else {
             cell_view
         };
-        self.cells[y][x] = cell_view;
+        self.set_cell(x, y, cell_view);
         if previous_cell_view != cell_view {
             RedrawCells(vec![(x, y)])
         } else {
@@ -417,18 +486,18 @@ impl GameView {
             return Default::default();
         }
         use CellState::*;
-        if self.state.cell_state(x, y) != Unopened {
+        if self.state.cell(x, y) != Unopened {
             return Default::default();
         }
         if self.state.is_mine(x, y) {
-            self.state.set_cell_state(x, y, Opened);
+            self.state.set_cell(x, y, Opened);
         } else {
             let mut cells_to_left_click = BTreeSet::new();
             cells_to_left_click.insert((x, y));
             while let Some(cell) = cells_to_left_click.pop_first() {
                 let (x, y) = cell;
-                if self.state.cell_state(x, y) == Unopened {
-                    self.state.set_cell_state(x, y, Opened);
+                if self.state.cell(x, y) == Unopened {
+                    self.state.set_cell(x, y, Opened);
                     redraw.extend(self.refresh_cell(x, y).0);
                     if self.state.nearby_mines(x, y) == 0 {
                         let x = x as i32;
@@ -462,7 +531,7 @@ impl GameView {
             return Default::default();
         }
         use CellState::*;
-        let cell_state = self.state.cell_state(x, y);
+        let cell_state = self.state.cell(x, y);
         let new_cell_state = match cell_state {
             Unopened => {
                 self.flags += 1;
@@ -475,7 +544,7 @@ impl GameView {
             Questioned => Unopened,
             Opened => return Default::default(),
         };
-        self.state.set_cell_state(x, y, new_cell_state);
+        self.state.set_cell(x, y, new_cell_state);
         self.refresh_cell(x, y)
     }
 
@@ -484,13 +553,14 @@ impl GameView {
             return Default::default();
         }
         use CellState::*;
-        if self.state.cell_state(x, y) != Opened
+        if self.state.cell(x, y) != Opened
             || self.state.nearby_mines(x, y) != self.state.nearby_flags(x, y)
         {
             return Default::default();
         }
         let x = x as i32;
         let y = y as i32;
+        let mut redraw = Vec::new();
         for y1 in [y - 1, y, y + 1] {
             if y1 < 0 || y1 >= self.height() as i32 {
                 continue;
@@ -499,19 +569,25 @@ impl GameView {
                 if x1 < 0 || x1 >= self.width() as i32 {
                     continue;
                 }
-                if (!(x1 == x && y1 == y))
-                    && self.state.cell_state(x1 as usize, y1 as usize) == Unopened
+                if (!(x1 == x && y1 == y)) && self.state.cell(x1 as usize, y1 as usize) == Unopened
                 {
-                    self.state.set_cell_state(x1 as usize, y1 as usize, Opened);
+                    if (!self.state.is_mine(x1 as usize, y1 as usize))
+                        && self.state.nearby_mines(x1 as usize, y1 as usize) == 0
+                    {
+                        redraw.extend(self.left_click(x1 as usize, y1 as usize).0);
+                    } else {
+                        self.state.set_cell(x1 as usize, y1 as usize, Opened);
+                    }
                 }
             }
         }
         self.refresh_game_result();
         if self.result != GameResult::Playing {
-            self.refresh_all_cell()
+            redraw.extend(self.refresh_all_cell().0)
         } else {
-            self.refresh_3x3_cell(x as usize, y as usize)
+            redraw.extend(self.refresh_3x3_cell(x as usize, y as usize).0)
         }
+        RedrawCells(redraw)
     }
 
     pub fn gesture(&mut self, gesture: Gesture) -> RedrawCells {
@@ -526,7 +602,7 @@ impl GameView {
         match self.result {
             GameResult::Win | GameResult::Lose => true,
             GameResult::Playing => matches!(
-                self.cells[y][x],
+                self.cell(x, y),
                 CellView::Opened(_) | CellView::Flagged | CellView::Questioned
             ),
         }
@@ -566,15 +642,19 @@ mod tests {
     #[test]
     fn new_game() {
         let options = GameOptions {
-            size: (3, 3),
+            difficulty: Difficulty::Custom {
+                width: 3,
+                height: 3,
+                mines: 3,
+            },
             safe_pos: None,
-            mines: 3,
             seed: Some(1),
         };
-        let state = options.build();
+        let state = options.clone().build();
         assert_eq!(
             state,
             GameState {
+                options,
                 mines: vec![
                     vec![true, false, false],
                     vec![false, false, false],
@@ -596,9 +676,12 @@ mod tests {
     fn game_view() {
         let mut view = GameView::from(
             GameOptions {
-                size: (3, 3),
+                difficulty: Difficulty::Custom {
+                    width: 3,
+                    height: 3,
+                    mines: 3,
+                },
                 safe_pos: None,
-                mines: 3,
                 seed: Some(1),
             }
             .build(),
