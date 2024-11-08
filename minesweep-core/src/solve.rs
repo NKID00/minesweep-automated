@@ -31,20 +31,26 @@ impl GameView {
             Flagged => Some(Variable(self.mine_var(x, y))),
             Opened(n) => {
                 let nearby_cells = self.nearby_cells(x, y);
+                let nearby_intact_cells: Vec<_> = nearby_cells
+                    .clone()
+                    .into_iter()
+                    .filter(|(x, y)| self.cell(*x, *y).is_intact())
+                    .collect();
+                let n = n - self.nearby_flags(x, y);
                 let formula = if n == 0 {
-                    nearby_cells
+                    nearby_intact_cells
                         .clone()
                         .into_iter()
                         .map(|cell| Negation(Box::new(Variable(self.mine_var(cell.0, cell.1)))))
                         .reduce(|f0, f1| Conjunction(Box::new(f0), Box::new(f1)))
                         .unwrap()
                 } else {
-                    nearby_cells
+                    nearby_intact_cells
                         .clone()
                         .into_iter()
                         .combinations(n as usize)
                         .map(|mines| {
-                            nearby_cells
+                            nearby_intact_cells
                                 .clone()
                                 .into_iter()
                                 .map(|cell| {
@@ -73,15 +79,9 @@ impl GameView {
     fn constraints(self: &GameView, intact_cells_to_examine: &HashSet<(usize, usize)>) -> Formula {
         use Formula::*;
         let mut cells_to_examine: HashSet<(usize, usize)> = HashSet::new();
-        for y in 0..self.height() {
-            for x in 0..self.width() {
-                // for (x, y) in intact_cells_to_examine {
-                cells_to_examine.extend(self.nearby_cells(x, y));
-                // cells_to_examine.extend(self.nearby_cells(*x, *y));
-                // }
-            }
+        for (x, y) in intact_cells_to_examine {
+            cells_to_examine.extend(self.nearby_cells(*x, *y));
         }
-        leptos::logging::log!("{cells_to_examine:?}");
         cells_to_examine
             .into_iter()
             .filter_map(|(x, y)| self.constraint_cell(x, y))

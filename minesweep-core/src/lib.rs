@@ -220,14 +220,14 @@ impl GameState {
         [y - 1, y, y + 1]
             .iter()
             .flat_map(|y1| {
-                let y1 = *y1 as i32;
+                let y1 = *y1;
                 if y1 < 0 || y1 >= self.height() as i32 {
                     return [].into();
                 }
                 [x - 1, x, x + 1]
                     .iter()
                     .filter_map(|x1| {
-                        let x1 = *x1 as i32;
+                        let x1 = *x1;
                         if x1 < 0 || x1 >= self.width() as i32 {
                             None
                         } else if !(x1 == x && y1 == y) {
@@ -303,12 +303,7 @@ pub enum CellView {
 impl CellView {
     fn is_intact(&self) -> bool {
         use CellView::*;
-        match self {
-            Unopened => true,
-            Hovered => true,
-            Pushed => true,
-            _ => false,
-        }
+        matches!(self, Unopened | Hovered | Pushed)
     }
 }
 
@@ -403,6 +398,14 @@ impl GameView {
         self.state.nearby_cells(x, y)
     }
 
+    pub fn nearby_mines(&self, x: usize, y: usize) -> u8 {
+        self.state.nearby_mines(x, y)
+    }
+
+    pub fn nearby_flags(&self, x: usize, y: usize) -> u8 {
+        self.state.nearby_flags(x, y)
+    }
+
     fn refresh_game_result(&mut self) {
         self.result = self.state.game_result();
         if self.result == GameResult::Win {
@@ -446,7 +449,7 @@ impl GameView {
             (Win, true, CellState::Flagged) => Flagged,
             (Win, true, CellState::Questioned) => Flagged,
             (Win, true, CellState::Opened) => unreachable!(),
-            (Win, false, CellState::Opened) => Opened(self.state.nearby_mines(x, y)),
+            (Win, false, CellState::Opened) => Opened(self.nearby_mines(x, y)),
             (Win, false, _) => unreachable!(),
             (Lose, true, CellState::Unopened) => Mine,
             (Lose, true, CellState::Flagged) => Flagged,
@@ -455,7 +458,7 @@ impl GameView {
             (Lose, false, CellState::Unopened) => Unopened,
             (Lose, false, CellState::Flagged) => WrongMine,
             (Lose, false, CellState::Questioned) => Questioned,
-            (Lose, false, CellState::Opened) => Opened(self.state.nearby_mines(x, y)),
+            (Lose, false, CellState::Opened) => Opened(self.nearby_mines(x, y)),
             (Playing, true, CellState::Unopened) => Unopened,
             (Playing, true, CellState::Flagged) => Flagged,
             (Playing, true, CellState::Questioned) => Questioned,
@@ -463,7 +466,7 @@ impl GameView {
             (Playing, false, CellState::Unopened) => Unopened,
             (Playing, false, CellState::Flagged) => Flagged,
             (Playing, false, CellState::Questioned) => Questioned,
-            (Playing, false, CellState::Opened) => Opened(self.state.nearby_mines(x, y)),
+            (Playing, false, CellState::Opened) => Opened(self.nearby_mines(x, y)),
         };
         let cell_view = if self.result == Playing && cell_view == Unopened {
             match self.gesture {
@@ -510,7 +513,7 @@ impl GameView {
                 if self.state.cell(x, y) == Unopened {
                     self.state.set_cell(x, y, Opened);
                     redraw.extend(self.refresh_cell(x, y).0);
-                    if self.state.nearby_mines(x, y) == 0 {
+                    if self.nearby_mines(x, y) == 0 {
                         for (x, y) in self.nearby_cells(x, y) {
                             cells_to_left_click.insert((x, y));
                         }
@@ -552,15 +555,13 @@ impl GameView {
             return Default::default();
         }
         use CellState::*;
-        if self.state.cell(x, y) != Opened
-            || self.state.nearby_mines(x, y) != self.state.nearby_flags(x, y)
-        {
+        if self.state.cell(x, y) != Opened || self.nearby_mines(x, y) != self.nearby_flags(x, y) {
             return Default::default();
         }
         let mut redraw = Vec::new();
         for (x, y) in self.nearby_cells(x, y) {
             if self.state.cell(x, y) == Unopened {
-                if (!self.state.is_mine(x, y)) && self.state.nearby_mines(x, y) == 0 {
+                if (!self.state.is_mine(x, y)) && self.nearby_mines(x, y) == 0 {
                     redraw.extend(self.left_click(x, y).0);
                 } else {
                     self.state.set_cell(x, y, Opened);
@@ -571,7 +572,7 @@ impl GameView {
         if self.result != GameResult::Playing {
             redraw.extend(self.refresh_all_cell().0)
         } else {
-            redraw.extend(self.refresh_3x3_cell(x as usize, y as usize).0)
+            redraw.extend(self.refresh_3x3_cell(x, y).0)
         }
         RedrawCells(redraw)
     }

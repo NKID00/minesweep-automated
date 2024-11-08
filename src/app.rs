@@ -266,7 +266,7 @@ fn Map(view: RwSignal<MaybeUninitGameView>, redraw: RwSignal<RedrawCells>) -> im
                 transform.scale = INITIAL_SCALE;
             });
             view.with_untracked(|view| init_view(&ctx, &images, view));
-            log!("init took {:.3}s", timestamp() - begin);
+            log!("init {:.3}s", timestamp() - begin);
             map_size
         }
     });
@@ -384,7 +384,7 @@ fn Map(view: RwSignal<MaybeUninitGameView>, redraw: RwSignal<RedrawCells>) -> im
                 .dyn_into::<CanvasRenderingContext2d>()
                 .unwrap();
             view.with_untracked(|view| redraw_view(&ctx, &images, view, redraw));
-            log!("redraw took {:.3}s", timestamp() - begin);
+            log!("redraw {:.3}s", timestamp() - begin);
         });
     });
 
@@ -618,19 +618,34 @@ fn Controls(
                     <p> { move || with!(|counter| format!("Time: {:02}:{:02}", counter / 60, counter % 60)) } </p>
                 },
             }) } <br />
-            <sl-switch class="non-draggable" disabled={
-                move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
-            } on:mousedown=move |ev| ev.stop_propagation() on:sl-change=move |_: JsValue| {
-                let begin = timestamp();
-                let mut result = None;
-                view.update(|view| result = view.automation_step());
-                if let Some(result) = result {
-                    update!(|redraw| *redraw = result);
-                } else {
-                    log!("automation failed");
-                }
-                log!("automation took {:.3}s", timestamp() - begin);
-            }> "Automation" </sl-switch>
+            <div id="automation" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
+                <sl-switch disabled={
+                    move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
+                } on:sl-change=move |_: JsValue| {
+                    let begin = timestamp();
+                    let mut result = None;
+                    view.update(|view| result = view.automation_step());
+                    if let Some(result) = result {
+                        update!(|redraw| *redraw = result);
+                    } else {
+                        log!("automation failed");
+                    }
+                    log!("automation {:.3}s", timestamp() - begin);
+                }> "Automation" </sl-switch>
+                <sl-button disabled={
+                    move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
+                } on:mousedown=move |ev| ev.stop_propagation() on:sl-change=move |_: JsValue| {
+                    let begin = timestamp();
+                    let mut result = None;
+                    view.update(|view| result = view.automation_step());
+                    if let Some(result) = result {
+                        update!(|redraw| *redraw = result);
+                    } else {
+                        log!("automation failed");
+                    }
+                    log!("automation {:.3}s", timestamp() - begin);
+                }> "Step" </sl-button>
+            </div>
             <div id="new-game-or-restart" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <sl-button on:click=move |_| drawer_show(new_game_drawer_ref)> "New Game" </sl-button>
                 <sl-button disabled={ move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. })) } on:click=move |_| drawer_show(restart_dialog_ref)> "Restart" </sl-button>
