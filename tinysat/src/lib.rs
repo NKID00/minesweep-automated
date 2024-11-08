@@ -4,7 +4,7 @@ pub use solver::Model;
 
 use std::{
     fmt::Display,
-    ops::{BitAnd, BitOr, BitXor},
+    ops::{BitAnd, BitOr, BitXor, Deref},
 };
 
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl Display for Formula {
 }
 
 impl Formula {
-    pub fn maximum_variable(&self) -> Variable {
+    fn maximum_variable(&self) -> Variable {
         use Formula::{Conjunction, Disjunction, Equivalence, Implication, Negation};
         let mut ans: Variable = 0.into();
         let mut formulas = vec![self];
@@ -109,17 +109,16 @@ impl Formula {
         }
     }
 
-    pub fn tseitin_encode(&self) -> Cnf {
+    pub fn tseitin_encode(&self, mut extra_vars_starts_with: Variable) -> Cnf {
         use Formula::{Conjunction, Disjunction, Equivalence, Implication, Negation};
         if let Some(l) = self.encode_literal() {
             return Cnf(vec![Clause(vec![l])]);
         }
-        let mut max_var = self.maximum_variable();
         let mut subformulas: Vec<(Literal, &Formula)> = vec![];
         let mut clauses = vec![];
         fn wrap_formula<'a>(
             f: &'a Formula,
-            max_var: &mut Variable,
+            extra_vars_starts_with: &mut Variable,
             subformulas: &mut Vec<(Literal, &'a Formula)>,
         ) -> Literal {
             use Polarity::*;
@@ -127,26 +126,30 @@ impl Formula {
                 Some(l) => l,
                 None => match f.combine_negation() {
                     (Positive, f) => {
-                        *max_var = max_var.next_variable();
-                        subformulas.push((Literal::positive(*max_var), f));
-                        Literal::positive(*max_var)
+                        subformulas.push((Literal::positive(*extra_vars_starts_with), f));
+                        let literal = Literal::positive(*extra_vars_starts_with);
+                        *extra_vars_starts_with = extra_vars_starts_with.next_variable();
+                        literal
                     }
                     (Negative, f) => {
-                        *max_var = max_var.next_variable();
-                        subformulas.push((Literal::positive(*max_var), f));
-                        Literal::negative(*max_var)
+                        subformulas.push((Literal::positive(*extra_vars_starts_with), f));
+                        let literal = Literal::negative(*extra_vars_starts_with);
+                        *extra_vars_starts_with = extra_vars_starts_with.next_variable();
+                        literal
                     }
                 },
             }
         }
-        let l = wrap_formula(self, &mut max_var, &mut subformulas);
+        let l = wrap_formula(self, &mut extra_vars_starts_with, &mut subformulas);
         clauses.push(Clause(vec![l]));
         while let Some((v, f)) = subformulas.pop() {
             match f {
                 Formula::Variable(_) | Negation(_) => unreachable!(),
                 Conjunction(f0, f1) => {
-                    let f0_literal = wrap_formula(f0, &mut max_var, &mut subformulas);
-                    let f1_literal = wrap_formula(f1, &mut max_var, &mut subformulas);
+                    let f0_literal =
+                        wrap_formula(f0, &mut extra_vars_starts_with, &mut subformulas);
+                    let f1_literal =
+                        wrap_formula(f1, &mut extra_vars_starts_with, &mut subformulas);
                     clauses.extend([
                         Clause(vec![v, f0_literal.negate(), f1_literal.negate()]),
                         Clause(vec![v.negate(), f0_literal]),
@@ -154,8 +157,10 @@ impl Formula {
                     ]);
                 }
                 Disjunction(f0, f1) => {
-                    let f0_literal = wrap_formula(f0, &mut max_var, &mut subformulas);
-                    let f1_literal = wrap_formula(f1, &mut max_var, &mut subformulas);
+                    let f0_literal =
+                        wrap_formula(f0, &mut extra_vars_starts_with, &mut subformulas);
+                    let f1_literal =
+                        wrap_formula(f1, &mut extra_vars_starts_with, &mut subformulas);
                     clauses.extend([
                         Clause(vec![v.negate(), f0_literal, f1_literal]),
                         Clause(vec![v, f0_literal.negate()]),
@@ -163,8 +168,10 @@ impl Formula {
                     ]);
                 }
                 Equivalence(f0, f1) => {
-                    let f0_literal = wrap_formula(f0, &mut max_var, &mut subformulas);
-                    let f1_literal = wrap_formula(f1, &mut max_var, &mut subformulas);
+                    let f0_literal =
+                        wrap_formula(f0, &mut extra_vars_starts_with, &mut subformulas);
+                    let f1_literal =
+                        wrap_formula(f1, &mut extra_vars_starts_with, &mut subformulas);
                     clauses.extend([
                         Clause(vec![v, f0_literal.negate(), f1_literal.negate()]),
                         Clause(vec![v, f0_literal, f1_literal]),
@@ -173,8 +180,10 @@ impl Formula {
                     ]);
                 }
                 Implication(f0, f1) => {
-                    let f0_literal = wrap_formula(f0, &mut max_var, &mut subformulas);
-                    let f1_literal = wrap_formula(f1, &mut max_var, &mut subformulas);
+                    let f0_literal =
+                        wrap_formula(f0, &mut extra_vars_starts_with, &mut subformulas);
+                    let f1_literal =
+                        wrap_formula(f1, &mut extra_vars_starts_with, &mut subformulas);
                     clauses.extend([
                         Clause(vec![v, f0_literal, f1_literal]),
                         Clause(vec![v.negate(), f0_literal.negate(), f1_literal]),
@@ -185,14 +194,22 @@ impl Formula {
         }
         Cnf(clauses)
     }
+
+    pub fn solve(&self) -> Model {
+        solve(self.clone().into())
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Cnf(Vec<Clause>);
 
 impl Cnf {
     pub fn solve(&self) -> Model {
         solve(self.clone())
+    }
+
+    pub fn merge(&mut self, other: Cnf) {
+        self.0.extend(other.0);
     }
 }
 
@@ -207,6 +224,13 @@ impl Display for Cnf {
             }
             Ok(())
         }
+    }
+}
+
+impl From<Formula> for Cnf {
+    fn from(value: Formula) -> Self {
+        let max_var = value.maximum_variable();
+        value.tseitin_encode(max_var.next_variable())
     }
 }
 
@@ -268,6 +292,14 @@ impl Display for Literal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Variable(pub usize);
+
+impl Deref for Variable {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Variable {
     fn next_variable(&self) -> Self {
@@ -379,7 +411,7 @@ mod tests {
         let f = default_formula();
         println!("{f}");
         assert_eq!(f.maximum_variable(), 5.into());
-        let cnf = f.tseitin_encode();
+        let cnf = Cnf::from(f);
         println!("{cnf}");
         let model = cnf.solve();
         println!("{model}");

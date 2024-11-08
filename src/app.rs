@@ -471,7 +471,8 @@ fn read_input_untracked(ref_: NodeRef<html::Custom>) -> Option<i64> {
 
 #[component]
 fn Controls(
-    view: ReadSignal<MaybeUninitGameView>,
+    view: RwSignal<MaybeUninitGameView>,
+    redraw: RwSignal<RedrawCells>,
     new_game: WriteSignal<GameOptions>,
     restart: Trigger,
 ) -> impl IntoView {
@@ -619,7 +620,17 @@ fn Controls(
             }) } <br />
             <sl-switch class="non-draggable" disabled={
                 move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
-            } on:mousedown=move |ev| ev.stop_propagation()> "Automation" </sl-switch>
+            } on:mousedown=move |ev| ev.stop_propagation() on:sl-change=move |_: JsValue| {
+                let begin = timestamp();
+                let mut result = None;
+                view.update(|view| result = view.automation_step());
+                if let Some(result) = result {
+                    update!(|redraw| *redraw = result);
+                } else {
+                    log!("automation failed");
+                }
+                log!("automation took {:.3}s", timestamp() - begin);
+            }> "Automation" </sl-switch>
             <div id="new-game-or-restart" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <sl-button on:click=move |_| drawer_show(new_game_drawer_ref)> "New Game" </sl-button>
                 <sl-button disabled={ move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. })) } on:click=move |_| drawer_show(restart_dialog_ref)> "Restart" </sl-button>
@@ -694,6 +705,17 @@ fn Controls(
                 }> "Restart" </sl-button>
                 <sl-button slot="footer" on:click=move |_| drawer_hide(restart_dialog_ref)> "Cancel" </sl-button>
             </sl-dialog>
+            { move || with!(|view| match view {
+                MaybeUninitGameView::Uninit { options, .. } =>
+                    if options.seed.is_some() {
+                        view! { <p> { format!("Seed: {}", options.seed.unwrap()) } </p> }.into_view()
+                    } else {
+                        ().into_view()
+                    }
+                MaybeUninitGameView::GameView(view) => view! {
+                    <p> { format!("Seed: {}", view.options().seed.unwrap()) } </p>
+                }.into_view(),
+            }) } <br />
             <a href="https://github.com/NKID00" target="_blank" id="footer" class="link non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <p> "© 2024 NKID00, under AGPL-3.0-or-later" </p>
             </a>
@@ -856,6 +878,13 @@ impl MaybeUninitGameView {
             MaybeUninitGameView::GameView(view) => view.is_draggable(x, y),
         }
     }
+
+    fn automation_step(&mut self) -> Option<RedrawCells> {
+        match self {
+            MaybeUninitGameView::Uninit { .. } => None,
+            MaybeUninitGameView::GameView(view) => view.automation_step(),
+        }
+    }
 }
 
 impl From<GameOptions> for MaybeUninitGameView {
@@ -897,6 +926,6 @@ pub fn App() -> impl IntoView {
         class = class_name,
         <Style> { style_val } </Style>
         <Map view redraw />
-        <Controls view={ view.read_only() } new_game restart />
+        <Controls view redraw new_game restart />
     }
 }

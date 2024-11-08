@@ -1,5 +1,7 @@
+mod solve;
+
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     ops::{Deref, DerefMut},
 };
 
@@ -8,6 +10,7 @@ use rand::{
     thread_rng, RngCore, SeedableRng,
 };
 use rand_chacha::ChaCha12Rng;
+use solve::SolveResult;
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Difficulty {
@@ -211,24 +214,38 @@ impl GameState {
         self.cells[y][x] = state;
     }
 
-    pub fn nearby_mines(&self, x: usize, y: usize) -> u8 {
-        let mut nearby_mines = 0;
+    pub fn nearby_cells(&self, x: usize, y: usize) -> Vec<(usize, usize)> {
         let x = x as i32;
         let y = y as i32;
-        for y1 in [y - 1, y, y + 1] {
-            if y1 < 0 || y1 >= self.height() as i32 {
-                continue;
-            }
-            for x1 in [x - 1, x, x + 1] {
-                if x1 < 0 || x1 >= self.width() as i32 {
-                    continue;
+        [y - 1, y, y + 1]
+            .iter()
+            .flat_map(|y1| {
+                let y1 = *y1 as i32;
+                if y1 < 0 || y1 >= self.height() as i32 {
+                    return [].into();
                 }
-                if (!(x1 == x && y1 == y)) && self.is_mine(x1 as usize, y1 as usize) {
-                    nearby_mines += 1;
-                }
-            }
-        }
-        nearby_mines
+                [x - 1, x, x + 1]
+                    .iter()
+                    .filter_map(|x1| {
+                        let x1 = *x1 as i32;
+                        if x1 < 0 || x1 >= self.width() as i32 {
+                            None
+                        } else if !(x1 == x && y1 == y) {
+                            Some((x1 as usize, y1 as usize))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub fn nearby_mines(&self, x: usize, y: usize) -> u8 {
+        self.nearby_cells(x, y)
+            .into_iter()
+            .filter(|(x, y)| self.is_mine(*x, *y))
+            .count() as u8
     }
 
     pub fn is_flag(&self, x: usize, y: usize) -> bool {
@@ -236,23 +253,10 @@ impl GameState {
     }
 
     pub fn nearby_flags(&self, x: usize, y: usize) -> u8 {
-        let mut nearby_flags = 0;
-        let x = x as i32;
-        let y = y as i32;
-        for y1 in [y - 1, y, y + 1] {
-            if y1 < 0 || y1 >= self.height() as i32 {
-                continue;
-            }
-            for x1 in [x - 1, x, x + 1] {
-                if x1 < 0 || x1 >= self.width() as i32 {
-                    continue;
-                }
-                if (!(x1 == x && y1 == y)) && self.is_flag(x1 as usize, y1 as usize) {
-                    nearby_flags += 1;
-                }
-            }
-        }
-        nearby_flags
+        self.nearby_cells(x, y)
+            .into_iter()
+            .filter(|(x, y)| self.is_flag(*x, *y))
+            .count() as u8
     }
 
     pub fn is_opened(&self, x: usize, y: usize) -> bool {
@@ -294,6 +298,18 @@ pub enum CellView {
     Mine,
     WrongMine,
     Exploded,
+}
+
+impl CellView {
+    fn is_intact(&self) -> bool {
+        use CellView::*;
+        match self {
+            Unopened => true,
+            Hovered => true,
+            Pushed => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -383,6 +399,10 @@ impl GameView {
         self.cells[y][x] = cell;
     }
 
+    pub fn nearby_cells(&self, x: usize, y: usize) -> Vec<(usize, usize)> {
+        self.state.nearby_cells(x, y)
+    }
+
     fn refresh_game_result(&mut self) {
         self.result = self.state.game_result();
         if self.result == GameResult::Win {
@@ -402,18 +422,9 @@ impl GameView {
 
     fn refresh_3x3_cell(&mut self, x: usize, y: usize) -> RedrawCells {
         let mut redraw = Vec::new();
-        let x = x as i32;
-        let y = y as i32;
-        for y1 in [y - 1, y, y + 1] {
-            if y1 < 0 || y1 >= self.height() as i32 {
-                continue;
-            }
-            for x1 in [x - 1, x, x + 1] {
-                if x1 < 0 || x1 >= self.width() as i32 {
-                    continue;
-                }
-                redraw.extend(self.refresh_cell(x1 as usize, y1 as usize).0);
-            }
+        redraw.extend(self.refresh_cell(x, y).0);
+        for (x, y) in self.nearby_cells(x, y) {
+            redraw.extend(self.refresh_cell(x, y).0);
         }
         RedrawCells(redraw)
     }
@@ -500,20 +511,8 @@ impl GameView {
                     self.state.set_cell(x, y, Opened);
                     redraw.extend(self.refresh_cell(x, y).0);
                     if self.state.nearby_mines(x, y) == 0 {
-                        let x = x as i32;
-                        let y = y as i32;
-                        for y1 in [y - 1, y, y + 1] {
-                            if y1 < 0 || y1 >= self.height() as i32 {
-                                continue;
-                            }
-                            for x1 in [x - 1, x, x + 1] {
-                                if x1 < 0 || x1 >= self.width() as i32 {
-                                    continue;
-                                }
-                                if !(x1 == x && y1 == y) {
-                                    cells_to_left_click.insert((x1 as usize, y1 as usize));
-                                }
-                            }
+                        for (x, y) in self.nearby_cells(x, y) {
+                            cells_to_left_click.insert((x, y));
                         }
                     }
                 }
@@ -558,26 +557,13 @@ impl GameView {
         {
             return Default::default();
         }
-        let x = x as i32;
-        let y = y as i32;
         let mut redraw = Vec::new();
-        for y1 in [y - 1, y, y + 1] {
-            if y1 < 0 || y1 >= self.height() as i32 {
-                continue;
-            }
-            for x1 in [x - 1, x, x + 1] {
-                if x1 < 0 || x1 >= self.width() as i32 {
-                    continue;
-                }
-                if (!(x1 == x && y1 == y)) && self.state.cell(x1 as usize, y1 as usize) == Unopened
-                {
-                    if (!self.state.is_mine(x1 as usize, y1 as usize))
-                        && self.state.nearby_mines(x1 as usize, y1 as usize) == 0
-                    {
-                        redraw.extend(self.left_click(x1 as usize, y1 as usize).0);
-                    } else {
-                        self.state.set_cell(x1 as usize, y1 as usize, Opened);
-                    }
+        for (x, y) in self.nearby_cells(x, y) {
+            if self.state.cell(x, y) == Unopened {
+                if (!self.state.is_mine(x, y)) && self.state.nearby_mines(x, y) == 0 {
+                    redraw.extend(self.left_click(x, y).0);
+                } else {
+                    self.state.set_cell(x, y, Opened);
                 }
             }
         }
@@ -607,31 +593,29 @@ impl GameView {
             ),
         }
     }
-}
 
-#[derive(Debug)]
-pub struct GameViewIter<'a> {
-    game_view: &'a GameView,
-    width: usize,
-    height: usize,
-    x: usize,
-    y: usize,
-}
-
-impl Iterator for GameViewIter<'_> {
-    type Item = (usize, usize, CellView);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.x >= self.width {
-            self.x = 0;
-            self.y += 1;
-        }
-        if self.y >= self.height {
+    pub fn automation_step(&mut self) -> Option<RedrawCells> {
+        let SolveResult {
+            must_be_mine,
+            must_not_mine,
+        } = self.solve();
+        if must_be_mine.is_empty() && must_not_mine.is_empty() {
             return None;
         }
-        let result = (self.x, self.y, self.game_view.cells[self.y][self.x]);
-        self.x += 1;
-        Some(result)
+        let mut redraw = HashSet::<(usize, usize)>::new();
+        for (x, y) in must_be_mine {
+            // TODO: detect human interference
+            redraw.extend(self.right_click(x, y).0);
+        }
+        for (x, y) in must_not_mine {
+            redraw.extend(self.left_click(x, y).0);
+        }
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                redraw.extend(self.middle_click(x, y).0);
+            }
+        }
+        Some(RedrawCells(redraw.into_iter().collect()))
     }
 }
 

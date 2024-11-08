@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tinysat = { path = "../tinysat" }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 serde = { version = "1.0.213", features = ["derive"] }
+itertools = "0.13.0"
+leptos = "0.6.15"
