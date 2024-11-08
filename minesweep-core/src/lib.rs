@@ -10,9 +10,10 @@ use rand::{
     thread_rng, RngCore, SeedableRng,
 };
 use rand_chacha::ChaCha12Rng;
+use serde::{Deserialize, Serialize};
 use solve::SolveResult;
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 pub enum Difficulty {
     Easy,
     Medium,
@@ -68,7 +69,7 @@ impl Difficulty {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 pub struct GameOptions {
     pub difficulty: Difficulty,
     pub safe_pos: Option<(usize, usize)>,
@@ -147,7 +148,7 @@ impl GameOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CellState {
     Unopened,
     Flagged,
@@ -155,14 +156,14 @@ pub enum CellState {
     Opened,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 pub struct GameState {
     pub options: GameOptions,
     pub mines: Vec<Vec<bool>>,
     cells: Vec<Vec<CellState>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Serialize, Deserialize)]
 pub enum GameResult {
     Win,
     Lose,
@@ -287,7 +288,7 @@ impl GameState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum CellView {
     Unopened,
     Hovered,
@@ -307,7 +308,7 @@ impl CellView {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Gesture {
     Hover(usize, usize),
     LeftOrRightPush(usize, usize),
@@ -315,7 +316,7 @@ pub enum Gesture {
     None,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameView {
     state: GameState,
     cells: Vec<Vec<CellView>>,
@@ -346,7 +347,7 @@ impl From<GameState> for GameView {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RedrawCells(pub Vec<(usize, usize)>);
 
 impl RedrawCells {

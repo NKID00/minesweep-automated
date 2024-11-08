@@ -1,4 +1,7 @@
+use automation_worker::Automation;
 use ev::{mousemove, mouseup};
+use futures::{SinkExt, StreamExt};
+use gloo_worker::Spawnable;
 use html::Canvas;
 use js_sys::{Object, Reflect};
 use leptos::logging::log;
@@ -8,6 +11,7 @@ use leptos_use::{
     use_event_listener, use_interval, use_mouse, use_mouse_in_element, use_window_size,
     UseIntervalReturn, UseMouseInElementReturn, UseMouseReturn, UseWindowSizeReturn,
 };
+use serde::{Deserialize, Serialize};
 use stylers::style_str;
 use wasm_bindgen::{prelude::*, JsValue};
 use web_sys::{CanvasRenderingContext2d, HtmlDivElement, HtmlImageElement};
@@ -544,6 +548,51 @@ fn Controls(
         reset();
         pause();
     });
+    let (automation, set_automation) = create_signal(false);
+    let automation_fail_ref: NodeRef<html::Custom> = create_node_ref();
+    let bridge = store_value(Automation::spawner().spawn("./automation-worker.js"));
+    let automation_result = create_resource(
+        move || view(),
+        move |view| async move {
+            match view {
+                MaybeUninitGameView::Uninit { .. } => None,
+                MaybeUninitGameView::GameView(view) => {
+                    let mut bridge = with!(|bridge| bridge.fork());
+                    bridge.send(view).await.unwrap();
+                    bridge.next().await
+                }
+            }
+        },
+    );
+    // redraw after automation step
+    create_effect(move |_| {
+        if automation_result.loading()() {
+            return;
+        }
+        let Some(Some((duration, new_view, new_result))) = automation_result() else {
+            return;
+        };
+        if let Some(new_result) = new_result {
+            log!("automation {duration:.3}s, success");
+            update!(move |view| *view = MaybeUninitGameView::GameView(new_view));
+            update!(move |redraw| *redraw = new_result);
+        } else {
+            log!("automation {duration:.3}s, fail");
+        }
+    });
+    // chain automation step
+    create_effect(move |_| {
+        if automation_result.loading()() {
+            return;
+        }
+        if !automation() {
+            return;
+        }
+        let Some(Some(_)) = automation_result() else {
+            return;
+        };
+        automation_result.refetch();
+    });
     let (class_name, style_val) = style_str! {
         .non-draggable {
             cursor: auto;
@@ -577,6 +626,7 @@ fn Controls(
         #random-seed {
             margin-right: 30vw;
         }
+        #automation,
         #new-game-or-restart {
             display: flex;
             flex-direction: row;
@@ -621,31 +671,22 @@ fn Controls(
             <div id="automation" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <sl-switch disabled={
                     move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
-                } on:sl-change=move |_: JsValue| {
-                    let begin = timestamp();
-                    let mut result = None;
-                    view.update(|view| result = view.automation_step());
-                    if let Some(result) = result {
-                        update!(|redraw| *redraw = result);
-                    } else {
-                        log!("automation failed");
+                } on:sl-change=move |ev: JsValue| {
+                    let target = Reflect::get(&ev, &"target".into()).unwrap();
+                    let checked = Reflect::get(&target, &"checked".into()).unwrap().as_bool().unwrap();
+                    set_automation(checked);
+                    if checked {
+                        automation_result.refetch()
                     }
-                    log!("automation {:.3}s", timestamp() - begin);
                 }> "Automation" </sl-switch>
                 <sl-button disabled={
                     move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
-                } on:mousedown=move |ev| ev.stop_propagation() on:sl-change=move |_: JsValue| {
-                    let begin = timestamp();
-                    let mut result = None;
-                    view.update(|view| result = view.automation_step());
-                    if let Some(result) = result {
-                        update!(|redraw| *redraw = result);
-                    } else {
-                        log!("automation failed");
-                    }
-                    log!("automation {:.3}s", timestamp() - begin);
-                }> "Step" </sl-button>
+                } on:click=move |_| automation_result.refetch()> "Step" </sl-button>
             </div>
+            <sl-alert variant="danger" duration="2000" countdown="ltr" closable ref=automation_fail_ref>
+                <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
+                "No possible move found"
+            </sl-alert>
             <div id="new-game-or-restart" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <sl-button on:click=move |_| drawer_show(new_game_drawer_ref)> "New Game" </sl-button>
                 <sl-button disabled={ move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. })) } on:click=move |_| drawer_show(restart_dialog_ref)> "Restart" </sl-button>
@@ -738,7 +779,7 @@ fn Controls(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 enum MaybeUninitGameView {
     Uninit {
         gesture: Gesture,
@@ -891,13 +932,6 @@ impl MaybeUninitGameView {
         match self {
             MaybeUninitGameView::Uninit { .. } => false,
             MaybeUninitGameView::GameView(view) => view.is_draggable(x, y),
-        }
-    }
-
-    fn automation_step(&mut self) -> Option<RedrawCells> {
-        match self {
-            MaybeUninitGameView::Uninit { .. } => None,
-            MaybeUninitGameView::GameView(view) => view.automation_step(),
         }
     }
 }
