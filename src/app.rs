@@ -6,6 +6,7 @@ use html::Canvas;
 use js_sys::{Object, Reflect};
 use leptos::logging::log;
 use leptos::*;
+use leptos_dom::helpers::set_property;
 use leptos_meta::*;
 use leptos_use::{
     use_event_listener, use_interval, use_mouse, use_mouse_in_element, use_window_size,
@@ -549,11 +550,16 @@ fn Controls(
         pause();
     });
     let (automation, set_automation) = create_signal(false);
+    let automation_switch_ref: NodeRef<html::Custom> = create_node_ref();
     let automation_fail_ref: NodeRef<html::Custom> = create_node_ref();
     let bridge = store_value(Automation::spawner().spawn("./automation-worker.js"));
     let automation_result = create_resource(
-        move || view(),
-        move |view| async move {
+        move || (),
+        move |_| async move {
+            let view = view.get_untracked();
+            if !view.is_playing() {
+                return None;
+            }
             match view {
                 MaybeUninitGameView::Uninit { .. } => None,
                 MaybeUninitGameView::GameView(view) => {
@@ -564,9 +570,10 @@ fn Controls(
             }
         },
     );
+    let automation_in_progress = automation_result.loading();
     // redraw after automation step
     create_effect(move |_| {
-        if automation_result.loading()() {
+        if automation_in_progress() {
             return;
         }
         let Some(Some((duration, new_view, new_result))) = automation_result() else {
@@ -578,17 +585,23 @@ fn Controls(
             update!(move |redraw| *redraw = new_result);
         } else {
             log!("automation {duration:.3}s, fail");
+            set_property(
+                &into_html_element_untracked(automation_switch_ref),
+                "checked",
+                &Some(JsValue::FALSE),
+            );
+            alert_toast(automation_fail_ref);
         }
     });
     // chain automation step
     create_effect(move |_| {
-        if automation_result.loading()() {
+        if automation_in_progress()
+            || !view.with_untracked(|view| view.is_playing())
+            || !automation()
+        {
             return;
         }
-        if !automation() {
-            return;
-        }
-        let Some(Some(_)) = automation_result() else {
+        let Some(Some((_, _, Some(_)))) = automation_result() else {
             return;
         };
         automation_result.refetch();
@@ -678,7 +691,7 @@ fn Controls(
                     if checked {
                         automation_result.refetch()
                     }
-                }> "Automation" </sl-switch>
+                } ref=automation_switch_ref> "Automation" </sl-switch>
                 <sl-button disabled={
                     move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
                 } on:click=move |_| automation_result.refetch()> "Step" </sl-button>
@@ -932,6 +945,13 @@ impl MaybeUninitGameView {
         match self {
             MaybeUninitGameView::Uninit { .. } => false,
             MaybeUninitGameView::GameView(view) => view.is_draggable(x, y),
+        }
+    }
+
+    fn is_playing(&self) -> bool {
+        match self {
+            MaybeUninitGameView::Uninit { .. } => false,
+            MaybeUninitGameView::GameView(view) => view.result == GameResult::Playing,
         }
     }
 }
