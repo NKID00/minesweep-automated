@@ -1,6 +1,20 @@
 # Minesweep Automated
 
-The classic Minesweeper game and its SAT-solver-based automated gameplay.
+Web-based classical Minesweeper game and automated gameplay via solving CSP with a homemade SAT solver.
+
+Features for the SAT solver in `tinysat/`:
+
+- [x] Branch Randomly
+- [x] Unit Propagation
+- [x] Backtrack
+- [ ] Conflict Analysis
+- [ ] Clause Minimization
+- [ ] Restart
+- [ ] Lemma Deletion
+- [ ] Branch Heuristic
+- [ ] Watched Literals
+
+Install nightly Rust with `wasm32-unknown-unknown` target and Trunk, then run `trunk serve` to build and serve the project.
 
 #### Copying
 
