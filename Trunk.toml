@@ -1,2 +1,2 @@
 [build]
-target = "./index.html"
+public_url = "/g/minesweep-automated"
