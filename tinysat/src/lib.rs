@@ -1,6 +1,6 @@
 mod solver;
-use solver::solve;
 pub use solver::Model;
+use solver::solve;
 
 use std::{
     fmt::Display,
@@ -220,7 +220,7 @@ impl Display for Cnf {
         } else {
             write!(f, "{}", self.0[0])?;
             for l in self.0.iter().skip(1) {
-                write!(f, " \\land {}", l)?;
+                write!(f, " \\land {l}")?;
             }
             Ok(())
         }
@@ -244,7 +244,7 @@ impl Display for Clause {
         } else {
             write!(f, "\\left( {}", self.0[0])?;
             for l in self.0.iter().skip(1) {
-                write!(f, " \\lor {}", l)?;
+                write!(f, " \\lor {l}")?;
             }
             write!(f, " \\right)")
         }
@@ -364,11 +364,7 @@ impl BitXor for Polarity {
 
     fn bitxor(self, rhs: Self) -> Self::Output {
         use Polarity::*;
-        if self != rhs {
-            Positive
-        } else {
-            Negative
-        }
+        if self != rhs { Positive } else { Negative }
     }
 }
 

@@ -9,12 +9,12 @@ use leptos::*;
 use leptos_dom::helpers::set_property;
 use leptos_meta::*;
 use leptos_use::{
-    use_event_listener, use_interval, use_mouse, use_mouse_in_element, use_window_size,
     UseIntervalReturn, UseMouseInElementReturn, UseMouseReturn, UseWindowSizeReturn,
+    use_event_listener, use_interval, use_mouse, use_mouse_in_element, use_window_size,
 };
 use serde::{Deserialize, Serialize};
 use stylers::style_str;
-use wasm_bindgen::{prelude::*, JsValue};
+use wasm_bindgen::{JsValue, prelude::*};
 use web_sys::{CanvasRenderingContext2d, HtmlDivElement, HtmlImageElement};
 
 use minesweep_core::{
@@ -63,7 +63,7 @@ impl Transform {
 
 fn clear(ctx: &CanvasRenderingContext2d, canvas: &HtmlElement<Canvas>) {
     ctx.save();
-    ctx.set_fill_style(&"white".into());
+    ctx.set_fill_style_str("white");
     ctx.fill_rect(0., 0., canvas.width() as f64, canvas.height() as f64);
     ctx.restore();
 }
@@ -84,7 +84,7 @@ fn map_pixel_size_with_padding(view: &MaybeUninitGameView) -> (f64, f64) {
 
 fn init_view(ctx: &CanvasRenderingContext2d, images: &Images, view: &MaybeUninitGameView) {
     let (w_pixels, h_pixels) = map_pixel_size(view);
-    ctx.set_stroke_style(&"#777".into());
+    ctx.set_stroke_style_str("#777");
     ctx.set_line_width(2.);
     ctx.stroke_rect(
         PADDING / 2.,
@@ -129,7 +129,7 @@ fn redraw_cell(
     let y = y as f64 * (CELL_SIZE + CELL_GAP) + PADDING;
     let w = CELL_SIZE;
     let h = CELL_SIZE;
-    ctx.set_fill_style(&"white".into());
+    ctx.set_fill_style_str("white");
     ctx.fill_rect(
         x - CELL_GAP / 2.,
         y - CELL_GAP / 2.,
@@ -139,9 +139,9 @@ fn redraw_cell(
     match cell {
         CellView::Unopened | CellView::Hovered | CellView::Pushed => {
             match cell {
-                CellView::Unopened => ctx.set_fill_style(&"#f0f0f0".into()),
-                CellView::Hovered => ctx.set_fill_style(&"#f3f3f3".into()),
-                CellView::Pushed => ctx.set_fill_style(&"#e0e0e0".into()),
+                CellView::Unopened => ctx.set_fill_style_str("#f0f0f0"),
+                CellView::Hovered => ctx.set_fill_style_str("#f3f3f3"),
+                CellView::Pushed => ctx.set_fill_style_str("#e0e0e0"),
                 _ => unreachable!(),
             }
             ctx.begin_path();
@@ -150,12 +150,12 @@ fn redraw_cell(
         }
         _ => {
             match cell {
-                CellView::Flagged => ctx.set_fill_style(&"#f0f0f0".into()),
-                CellView::Questioned => ctx.set_fill_style(&"#f0f0f0".into()),
-                CellView::Opened(_) => ctx.set_fill_style(&"white".into()),
-                CellView::Mine => ctx.set_fill_style(&"white".into()),
-                CellView::WrongMine => ctx.set_fill_style(&"white".into()),
-                CellView::Exploded => ctx.set_fill_style(&"white".into()),
+                CellView::Flagged => ctx.set_fill_style_str("#f0f0f0"),
+                CellView::Questioned => ctx.set_fill_style_str("#f0f0f0"),
+                CellView::Opened(_) => ctx.set_fill_style_str("white"),
+                CellView::Mine => ctx.set_fill_style_str("white"),
+                CellView::WrongMine => ctx.set_fill_style_str("white"),
+                CellView::Exploded => ctx.set_fill_style_str("white"),
                 _ => unreachable!(),
             }
             ctx.begin_path();
@@ -211,19 +211,19 @@ fn Map(view: RwSignal<MaybeUninitGameView>, redraw: RwSignal<RedrawCells>) -> im
         numbers.push(HtmlImageElement::new().unwrap());
         for n in 1..9 {
             let number = HtmlImageElement::new().unwrap();
-            number.set_src(&format!("/public/{n}.svg"));
+            number.set_src(&format!("public/{n}.svg"));
             numbers.push(number)
         }
         let flag = HtmlImageElement::new().unwrap();
-        flag.set_src("/public/flag.svg");
+        flag.set_src("public/flag.svg");
         let question = HtmlImageElement::new().unwrap();
-        question.set_src("/public/question.svg");
+        question.set_src("public/question.svg");
         let mine = HtmlImageElement::new().unwrap();
-        mine.set_src("/public/mine.svg");
+        mine.set_src("public/mine.svg");
         let wrong_mine = HtmlImageElement::new().unwrap();
-        wrong_mine.set_src("/public/wrong_mine.svg");
+        wrong_mine.set_src("public/wrong_mine.svg");
         let explosion = HtmlImageElement::new().unwrap();
-        explosion.set_src("/public/explosion.svg");
+        explosion.set_src("public/explosion.svg");
         Images {
             numbers,
             flag,
@@ -526,17 +526,33 @@ fn Controls(
         resume,
         ..
     } = use_interval(1000);
+    let (automation, set_automation) = create_signal(false);
+    let automation_switch_ref: NodeRef<html::Custom> = create_node_ref();
+    let automation_fail_ref: NodeRef<html::Custom> = create_node_ref();
+
     create_effect({
         let reset = reset.clone();
         let pause = pause.clone();
         move |_| {
             with!(|view| match view {
                 MaybeUninitGameView::Uninit { .. } => {
+                    set_property(
+                        &into_html_element_untracked(automation_switch_ref),
+                        "checked",
+                        &Some(JsValue::FALSE),
+                    );
+                    set_automation(false);
                     reset();
                     pause();
                 }
                 MaybeUninitGameView::GameView(view) =>
                     if view.result != GameResult::Playing {
+                        set_property(
+                            &into_html_element_untracked(automation_switch_ref),
+                            "checked",
+                            &Some(JsValue::FALSE),
+                        );
+                        set_automation(false);
                         pause();
                     } else if !is_active.get_untracked() {
                         resume()
@@ -546,12 +562,16 @@ fn Controls(
     });
     create_effect(move |_| {
         restart.track();
+        set_property(
+            &into_html_element_untracked(automation_switch_ref),
+            "checked",
+            &Some(JsValue::FALSE),
+        );
+        set_automation(false);
         reset();
         pause();
     });
-    let (automation, set_automation) = create_signal(false);
-    let automation_switch_ref: NodeRef<html::Custom> = create_node_ref();
-    let automation_fail_ref: NodeRef<html::Custom> = create_node_ref();
+
     let bridge = store_value(Automation::spawner().spawn("./automation-worker.js"));
     let automation_result = create_resource(
         move || (),
@@ -580,16 +600,17 @@ fn Controls(
             return;
         };
         if let Some(new_result) = new_result {
-            log!("automation {duration:.3}s, success");
+            log!("step {duration:.3}s, success");
             update!(move |view| *view = MaybeUninitGameView::GameView(new_view));
             update!(move |redraw| *redraw = new_result);
         } else {
-            log!("automation {duration:.3}s, fail");
+            log!("step {duration:.3}s, fail");
             set_property(
                 &into_html_element_untracked(automation_switch_ref),
                 "checked",
                 &Some(JsValue::FALSE),
             );
+            set_automation(false);
             alert_toast(automation_fail_ref);
         }
     });
@@ -664,26 +685,28 @@ fn Controls(
             set_offset_y(mouse_y() - element_position_y());
             set_mouse_down(true);
         }>
-            <h1>"Minesweep Automated"</h1>
             { move || with!(|view| match view {
                 MaybeUninitGameView::Uninit { options, .. } => view! {
-                    <p> "Tap to start" </p>
+                    <h2> "Tap to start" </h2>
                     <p> { format!("Mines: 0/{}", options.difficulty.mines()) } </p>
                     <p> "Time: 00:00" </p>
                 },
                 MaybeUninitGameView::GameView(view) => view! {
-                    <p> { match view.result {
-                        GameResult::Playing => "Playing 😊",
-                        GameResult::Win => "Win 😎",
-                        GameResult::Lose => "Lose 😵",
-                    } } </p>
+                    <h2> { match view.result {
+                        GameResult::Playing => "😊",
+                        GameResult::Win => "😎",
+                        GameResult::Lose => "😵",
+                    } } </h2>
                     <p> { format!("Mines: {}/{}", view.flags, view.mines) } </p>
                     <p> { move || with!(|counter| format!("Time: {:02}:{:02}", counter / 60, counter % 60)) } </p>
                 },
             }) } <br />
             <div id="automation" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <sl-switch disabled={
-                    move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
+                    move || with!(|view| match view{
+                        MaybeUninitGameView::Uninit { .. } => true,
+                        MaybeUninitGameView::GameView(v) => v.result != GameResult::Playing,
+                    })
                 } on:sl-change=move |ev: JsValue| {
                     let target = Reflect::get(&ev, &"target".into()).unwrap();
                     let checked = Reflect::get(&target, &"checked".into()).unwrap().as_bool().unwrap();
@@ -691,14 +714,17 @@ fn Controls(
                     if checked {
                         automation_result.refetch()
                     }
-                } ref=automation_switch_ref> "Automation" </sl-switch>
+                } ref=automation_switch_ref> "Auto!" </sl-switch>
                 <sl-button disabled={
-                    move || with!(|view| matches!(view, MaybeUninitGameView::Uninit { .. }))
+                    move || with!(|view| match view{
+                        MaybeUninitGameView::Uninit { .. } => true,
+                        MaybeUninitGameView::GameView(v) => v.result != GameResult::Playing,
+                    })
                 } on:click=move |_| automation_result.refetch()> "Step" </sl-button>
             </div>
             <sl-alert variant="danger" duration="2000" countdown="ltr" closable ref=automation_fail_ref>
                 <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
-                "No possible move found"
+                "No certain move found"
             </sl-alert>
             <div id="new-game-or-restart" class="non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
                 <sl-button on:click=move |_| drawer_show(new_game_drawer_ref)> "New Game" </sl-button>
@@ -766,7 +792,7 @@ fn Controls(
                 <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
                 "Invalid configuration"
             </sl-alert>
-            <sl-dialog label="Restart Confirm" class="non-draggable" ref=restart_dialog_ref on:mousedown=move |ev| ev.stop_propagation()>
+            <sl-dialog label="Confirm" class="non-draggable" ref=restart_dialog_ref on:mousedown=move |ev| ev.stop_propagation()>
                 "Do you want to restart the game?"
                 <sl-button slot="footer" variant="primary" on:click=move |_| {
                     drawer_hide(restart_dialog_ref);
@@ -822,7 +848,6 @@ impl MaybeUninitGameView {
                 gesture: view.gesture,
                 options: view.options(),
             };
-            self.init();
         }
     }
 
@@ -990,10 +1015,7 @@ pub fn App() -> impl IntoView {
         let (w, h) = view.with_untracked(|view| (view.width(), view.height()));
         update!(|redraw| *redraw = RedrawCells::redraw_all(w, h));
     });
-    let (_class_name, style_val) = style_str! {};
     view! {
-        class = class_name,
-        <Style> { style_val } </Style>
         <Map view redraw />
         <Controls view redraw new_game restart />
     }

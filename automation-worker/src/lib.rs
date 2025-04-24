@@ -1,5 +1,5 @@
 use futures::{SinkExt, StreamExt};
-use gloo_worker::reactor::{reactor, ReactorScope};
+use gloo_worker::reactor::{ReactorScope, reactor};
 use js_sys::global;
 use minesweep_core::{GameView, RedrawCells};
 use wasm_bindgen::JsCast;

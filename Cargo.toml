@@ -1,7 +1,7 @@
 [package]
 name = "minesweep-automated"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 automation-worker = {path = "./automation-worker" }
@@ -19,6 +19,9 @@ leptos-use = "0.13"
 web-sys = { version = "0.3", features = ["CanvasRenderingContext2d", "CssStyleDeclaration", "Document", "Element", "HtmlCanvasElement", "Performance", "Window"] }
 gloo-worker = { version = "0.5.0", features = ["futures"] }
 futures = "0.3.31"
+
+[patch.crates-io]
+leptos_macro = { git = "https://github.com/NKID00/leptos.git", branch = "leptos_0.6" }
 
 [workspace]
 members = ["automation-worker", "minesweep-core", "tinysat"]

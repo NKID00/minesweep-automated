@@ -6,8 +6,9 @@ use std::{
 };
 
 use rand::{
+    RngCore, SeedableRng,
     seq::{IteratorRandom, SliceRandom},
-    thread_rng, RngCore, SeedableRng,
+    thread_rng,
 };
 use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
