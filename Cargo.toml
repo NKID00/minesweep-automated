@@ -23,5 +23,8 @@ futures = "0.3.31"
 [patch.crates-io]
 leptos_macro = { git = "https://github.com/NKID00/leptos.git", branch = "leptos_0.6" }
 
+[patch.'https://github.com/xldenis/creusot']
+creusot-contracts = "0.4"
+
 [workspace]
 members = ["automation-worker", "minesweep-core", "tinysat"]

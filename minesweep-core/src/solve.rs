@@ -1,6 +1,8 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, str::FromStr};
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
+use splr::SolveIF;
 use tinysat::{Cnf, Formula, Variable};
 
 use crate::{CellView, GameResult, GameView};
@@ -89,11 +91,17 @@ impl GameView {
             .unwrap()
     }
 
-    fn check_cell(self: &GameView, constraints: &Cnf, x: usize, y: usize) -> SolveResult {
+    fn check_cell(
+        self: &GameView,
+        constraints: &Cnf,
+        x: usize,
+        y: usize,
+        solver: SatSolver,
+    ) -> SolveResult {
         use Formula::*;
         let mut assume_is_mine: Cnf = constraints.clone();
         assume_is_mine.merge(Variable(self.mine_var(x, y)).into());
-        if assume_is_mine.solve().is_unsat() {
+        if solver.is_unsat(assume_is_mine) {
             return SolveResult {
                 must_be_mine: vec![],
                 must_not_mine: vec![(x, y)],
@@ -101,7 +109,7 @@ impl GameView {
         }
         let mut assume_not_mine: Cnf = constraints.clone();
         assume_not_mine.merge(Negation(Box::new(Variable(self.mine_var(x, y)))).into());
-        if assume_not_mine.solve().is_unsat() {
+        if solver.is_unsat(assume_not_mine) {
             return SolveResult {
                 must_be_mine: vec![(x, y)],
                 must_not_mine: vec![],
@@ -110,7 +118,7 @@ impl GameView {
         SolveResult::default()
     }
 
-    pub fn solve(self: &GameView) -> SolveResult {
+    pub fn solve(self: &GameView, solver: SatSolver) -> SolveResult {
         if self.result != GameResult::Playing {
             return SolveResult::default();
         }
@@ -134,9 +142,53 @@ impl GameView {
             .tseitin_encode(Variable(0x10000));
         let mut result = SolveResult::default();
         for (x, y) in cells_to_examine {
-            result.merge(self.check_cell(&constraints, x, y));
+            result.merge(self.check_cell(&constraints, x, y, solver));
         }
         result
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SatSolver {
+    Tinysat,
+    CreuSAT,
+    Varisat,
+    Splr,
+}
+
+impl SatSolver {
+    fn is_unsat(&self, cnf: Cnf) -> bool {
+        match self {
+            SatSolver::Tinysat => cnf.solve().is_unsat(),
+            SatSolver::CreuSAT => {
+                let (variables, mut normalized) = cnf.normalize();
+                !CreuSAT::parser::preproc_and_solve(&mut normalized, variables.len() - 1)
+            }
+            SatSolver::Varisat => {
+                let (_variables, _normalized) = cnf.normalize();
+                todo!()
+            }
+            SatSolver::Splr => {
+                let (_variables, normalized) = cnf.normalize();
+                let mut solver =
+                    splr::Solver::try_from((splr::Config::default(), normalized.as_ref())).unwrap();
+                solver.solve().unwrap() == splr::Certificate::UNSAT
+            }
+        }
+    }
+}
+
+impl FromStr for SatSolver {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "tinysat" => Ok(SatSolver::Tinysat),
+            "creusat" => Ok(SatSolver::CreuSAT),
+            "varisat" => Ok(SatSolver::Varisat),
+            "splr" => Ok(SatSolver::Splr),
+            _ => Err(()),
+        }
     }
 }
 
@@ -161,7 +213,7 @@ mod tests {
         println!("{view:?}");
         view.left_click(0, 0);
         println!("{view:?}");
-        let result = view.solve();
+        let result = view.solve(SatSolver::Tinysat);
         println!("{result:?}");
     }
 }

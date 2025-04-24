@@ -20,7 +20,7 @@ use wasm_bindgen::{JsValue, prelude::*};
 use web_sys::{CanvasRenderingContext2d, HtmlDivElement, HtmlImageElement};
 
 use minesweep_core::{
-    CellView, Difficulty, GameOptions, GameResult, GameView, Gesture, RedrawCells,
+    CellView, Difficulty, GameOptions, GameResult, GameView, Gesture, RedrawCells, SatSolver,
 };
 
 const INITIAL_SCALE: f64 = 1.;
@@ -530,6 +530,7 @@ fn Controls(
     } = use_interval(1000);
     let (automation, set_automation) = create_signal(false);
     let automation_switch_ref: NodeRef<html::Custom> = create_node_ref();
+    let automation_solver_ref: NodeRef<html::Custom> = create_node_ref();
     let automation_fail_ref: NodeRef<html::Custom> = create_node_ref();
 
     create_effect({
@@ -586,7 +587,9 @@ fn Controls(
                 MaybeUninitGameView::Uninit { .. } => None,
                 MaybeUninitGameView::GameView(view) => {
                     let mut bridge = with!(|bridge| bridge.fork());
-                    bridge.send(view).await.unwrap();
+                    let solver =
+                        read_input_untracked(automation_solver_ref).unwrap_or(SatSolver::Tinysat);
+                    bridge.send((view, solver)).await.unwrap();
                     bridge.next().await
                 }
             }
@@ -728,13 +731,13 @@ fn Controls(
                     })
                 } on:click=move |_| automation_result.refetch()> "Step" </sl-button>
             </div>
-            <sl-select id="sat-solver" value="tinysat">
+            <sl-select id="sat-solver" value="tinysat" ref=automation_solver_ref>
                 <small> "SAT Solver" </small>
                 <sl-option value="tinysat">
                     <sl-badge class="small-caps" slot="suffix"> "Homemade & Slow" </sl-badge>
                     "tinysat"
                 </sl-option>
-                <sl-option value="curesat">
+                <sl-option value="creusat">
                     <sl-badge class="small-caps" slot="suffix"> "Formally Verified" </sl-badge>
                     "CreuSAT"
                 </sl-option>

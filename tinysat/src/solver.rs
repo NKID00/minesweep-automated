@@ -55,20 +55,6 @@ impl DerefMut for Assignment {
     }
 }
 
-fn all_variables(cnf: &Cnf) -> HashSet<Variable> {
-    let mut result = HashSet::new();
-    for clause in cnf.0.iter() {
-        for Literal {
-            variable,
-            polarity: _,
-        } in clause.0.iter()
-        {
-            result.insert(*variable);
-        }
-    }
-    result
-}
-
 enum AssignResult {
     Reduced(Cnf),
     Unchanged(Cnf),
@@ -203,6 +189,10 @@ fn solve_rec(cnf: Cnf, mut variables: HashSet<Variable>) -> Model {
 }
 
 pub fn solve(cnf: Cnf) -> Model {
-    let variables = all_variables(&cnf);
+    let variables = cnf
+        .0
+        .iter()
+        .flat_map(|clause| clause.0.iter().map(|Literal { variable, .. }| *variable))
+        .collect();
     solve_rec(cnf, variables)
 }

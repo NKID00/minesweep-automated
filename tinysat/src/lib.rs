@@ -3,6 +3,7 @@ pub use solver::Model;
 use solver::solve;
 
 use std::{
+    collections::HashMap,
     fmt::Display,
     ops::{BitAnd, BitOr, BitXor, Deref},
 };
@@ -210,6 +211,41 @@ impl Cnf {
 
     pub fn merge(&mut self, other: Cnf) {
         self.0.extend(other.0);
+    }
+
+    /// Returns a list of all variables indexed from 1 (index 0 is garbage), and normalized cnf based on that index.
+    pub fn normalize(&self) -> (Vec<Variable>, Vec<Vec<i32>>) {
+        let mut next_index = 1usize;
+        let mut map = HashMap::<Variable, usize>::new();
+        let normalized = self
+            .0
+            .iter()
+            .map(|clause| {
+                clause
+                    .0
+                    .iter()
+                    .map(|Literal { variable, polarity }| {
+                        let index = match map.get(variable) {
+                            Some(index) => *index,
+                            None => {
+                                map.insert(*variable, next_index);
+                                next_index += 1;
+                                next_index - 1
+                            }
+                        } as i32;
+                        match polarity {
+                            Polarity::Positive => index,
+                            Polarity::Negative => -index,
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut variables = vec![Variable(0); next_index];
+        for (variable, index) in map {
+            variables[index] = variable;
+        }
+        (variables, normalized)
     }
 }
 

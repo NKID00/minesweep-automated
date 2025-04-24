@@ -5,6 +5,9 @@ edition = "2024"
 
 [dependencies]
 tinysat = { path = "../tinysat" }
+CreuSAT = { git = "https://github.com/sarsko/CreuSAT.git", rev = "b36aacd53874c49e77493ac6ecceabf0b1968154" }
+varisat = "0.2"
+splr = { version = "0.17", features = ["platform_wasm"] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 getrandom = { version = "0.2", features = ["js"] }

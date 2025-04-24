@@ -12,6 +12,7 @@ use rand::{
 };
 use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
+pub use solve::SatSolver;
 use solve::SolveResult;
 
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
@@ -597,11 +598,11 @@ impl GameView {
         }
     }
 
-    pub fn automation_step(&mut self) -> Option<RedrawCells> {
+    pub fn automation_step(&mut self, solver: SatSolver) -> Option<RedrawCells> {
         let SolveResult {
             must_be_mine,
             must_not_mine,
-        } = self.solve();
+        } = self.solve(solver);
         if must_be_mine.is_empty() && must_not_mine.is_empty() {
             return None;
         }
