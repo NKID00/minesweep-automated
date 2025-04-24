@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use automation_worker::Automation;
 use ev::{mousemove, mouseup};
 use futures::{SinkExt, StreamExt};
@@ -466,7 +468,7 @@ fn into_html_element_untracked(ref_: NodeRef<html::Custom>) -> web_sys::HtmlElem
     (*ref_.get_untracked().unwrap().into_any()).clone()
 }
 
-fn read_input_untracked(ref_: NodeRef<html::Custom>) -> Option<i64> {
+fn read_input_untracked<T: FromStr>(ref_: NodeRef<html::Custom>) -> Option<T> {
     Reflect::get(&into_html_element_untracked(ref_), &"value".into())
         .ok()?
         .as_string()?
@@ -673,6 +675,10 @@ fn Controls(
             align-items: center;
             gap: 2rem;
         }
+        .small-caps {
+            font-family: ui-serif, serif;
+            font-variant-caps: small-caps;
+        }
     };
     view! {
         class = class_name,
@@ -722,6 +728,19 @@ fn Controls(
                     })
                 } on:click=move |_| automation_result.refetch()> "Step" </sl-button>
             </div>
+            <sl-select id="sat-solver" value="tinysat">
+                <small> "SAT Solver" </small>
+                <sl-option value="tinysat">
+                    <sl-badge class="small-caps" slot="suffix"> "Homemade & Slow" </sl-badge>
+                    "tinysat"
+                </sl-option>
+                <sl-option value="curesat">
+                    <sl-badge class="small-caps" slot="suffix"> "Formally Verified" </sl-badge>
+                    "CreuSAT"
+                </sl-option>
+                <sl-option value="varisat"> "Varisat" </sl-option>
+                <sl-option value="splr"> "splr" </sl-option>
+            </sl-select>
             <sl-alert variant="danger" duration="2000" countdown="ltr" closable ref=automation_fail_ref>
                 <sl-icon slot="icon" name="exclamation-octagon"></sl-icon>
                 "No certain move found"
@@ -756,18 +775,18 @@ fn Controls(
                     }> "99" </sl-input>
                 </div>
                 <sl-button slot="footer" variant="primary" on:click=move |_| {
-                    let seed = read_input_untracked(seed_ref).map(|seed| seed as u64);
+                    let seed = read_input_untracked(seed_ref);
                     let difficulty = match difficulty() {
                         Difficulty::Custom {..} => {
-                            let Some(width) = read_input_untracked(width_ref) else {
+                            let Some(width) = read_input_untracked::<i64>(width_ref) else {
                                 alert_toast(invalid_config_alert_ref);
                                 return;
                             };
-                            let Some(height) = read_input_untracked(height_ref) else {
+                            let Some(height) = read_input_untracked::<i64>(height_ref) else {
                                 alert_toast(invalid_config_alert_ref);
                                 return;
                             };
-                            let Some(mines) = read_input_untracked(mines_ref) else {
+                            let Some(mines) = read_input_untracked::<i64>(mines_ref) else {
                                 alert_toast(invalid_config_alert_ref);
                                 return;
                             };
@@ -811,8 +830,9 @@ fn Controls(
                     <p> { format!("Seed: {}", view.options().seed.unwrap()) } </p>
                 }.into_view(),
             }) } <br />
-            <a href="https://github.com/NKID00" target="_blank" id="footer" class="link non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
-                <p> "© 2024 NKID00, under AGPL-3.0-or-later" </p>
+            <a href="https://github.com/NKID00/minesweep-automated" target="_blank" id="footer" class="link non-draggable" on:mousedown=move |ev| ev.stop_propagation()>
+                <p> "© 2024 NKID00, AGPL-3.0" </p>
+                <p> "Click here for source" </p>
             </a>
         </div>
     }
