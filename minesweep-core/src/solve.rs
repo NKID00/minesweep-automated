@@ -2,7 +2,6 @@ use std::{collections::HashSet, str::FromStr};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use splr::SolveIF;
 use tinysat::{Cnf, Formula, Variable};
 
 use crate::{CellView, GameResult, GameView};
@@ -99,17 +98,15 @@ impl GameView {
         solver: SatSolver,
     ) -> SolveResult {
         use Formula::*;
-        let mut assume_is_mine: Cnf = constraints.clone();
-        assume_is_mine.merge(Variable(self.mine_var(x, y)).into());
-        if solver.is_unsat(assume_is_mine) {
+        let assumption_is_mine: Cnf = Variable(self.mine_var(x, y)).into();
+        if solver.is_unsat(constraints, assumption_is_mine) {
             return SolveResult {
                 must_be_mine: vec![],
                 must_not_mine: vec![(x, y)],
             };
         }
-        let mut assume_not_mine: Cnf = constraints.clone();
-        assume_not_mine.merge(Negation(Box::new(Variable(self.mine_var(x, y)))).into());
-        if solver.is_unsat(assume_not_mine) {
+        let assumption_not_mine: Cnf = Negation(Box::new(Variable(self.mine_var(x, y)))).into();
+        if solver.is_unsat(constraints, assumption_not_mine) {
             return SolveResult {
                 must_be_mine: vec![(x, y)],
                 must_not_mine: vec![],
@@ -148,6 +145,30 @@ impl GameView {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CnfWrapper(Cnf);
+
+impl IntoIterator for CnfWrapper {
+    type Item = Vec<varisat::Lit>;
+
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0
+            .normalize()
+            .1
+            .into_iter()
+            .map(|clause| {
+                clause
+                    .into_iter()
+                    .map(|literal| varisat::Lit::from_dimacs(literal as isize))
+                    .collect_vec()
+            })
+            .collect_vec()
+            .into_iter()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SatSolver {
     Tinysat,
@@ -157,22 +178,32 @@ pub enum SatSolver {
 }
 
 impl SatSolver {
-    fn is_unsat(&self, cnf: Cnf) -> bool {
+    fn is_unsat(&self, constraints: &Cnf, assumption: Cnf) -> bool {
         match self {
-            SatSolver::Tinysat => cnf.solve().is_unsat(),
+            SatSolver::Tinysat => {
+                let mut constraints = constraints.clone();
+                constraints.merge(assumption);
+                constraints.solve().is_unsat()
+            }
             SatSolver::CreuSAT => {
-                let (variables, mut normalized) = cnf.normalize();
+                let mut constraints = constraints.clone();
+                constraints.merge(assumption);
+                let (variables, mut normalized) = constraints.normalize();
                 !CreuSAT::parser::preproc_and_solve(&mut normalized, variables.len() - 1)
             }
             SatSolver::Varisat => {
-                let (_variables, _normalized) = cnf.normalize();
-                todo!()
+                let mut constraints = constraints.clone();
+                constraints.merge(assumption);
+                let wrapper = CnfWrapper(constraints);
+                let mut solver = varisat::Solver::new();
+                solver.add_formula(&wrapper.into());
+                !solver.solve().unwrap()
             }
             SatSolver::Splr => {
-                let (_variables, normalized) = cnf.normalize();
-                let mut solver =
-                    splr::Solver::try_from((splr::Config::default(), normalized.as_ref())).unwrap();
-                solver.solve().unwrap() == splr::Certificate::UNSAT
+                let mut constraints = constraints.clone();
+                constraints.merge(assumption);
+                let (_variables, normalized) = constraints.normalize();
+                splr::Certificate::try_from(normalized).unwrap() == splr::Certificate::UNSAT
             }
         }
     }
@@ -197,7 +228,7 @@ mod tests {
     use crate::*;
 
     #[test]
-    fn simple() {
+    fn solve() {
         let mut view = GameView::from(
             GameOptions {
                 difficulty: Difficulty::Custom {
@@ -214,6 +245,12 @@ mod tests {
         view.left_click(0, 0);
         println!("{view:?}");
         let result = view.solve(SatSolver::Tinysat);
-        println!("{result:?}");
+        println!("tinysat: {result:?}");
+        let result = view.solve(SatSolver::CreuSAT);
+        println!("CreuSAT: {result:?}");
+        let result = view.solve(SatSolver::Varisat);
+        println!("Varisat: {result:?}");
+        let result = view.solve(SatSolver::Splr);
+        println!("splr: {result:?}");
     }
 }

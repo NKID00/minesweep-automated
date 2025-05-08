@@ -220,25 +220,31 @@ impl Cnf {
         let normalized = self
             .0
             .iter()
-            .map(|clause| {
-                clause
-                    .0
-                    .iter()
-                    .map(|Literal { variable, polarity }| {
-                        let index = match map.get(variable) {
-                            Some(index) => *index,
-                            None => {
-                                map.insert(*variable, next_index);
-                                next_index += 1;
-                                next_index - 1
-                            }
-                        } as i32;
-                        match polarity {
-                            Polarity::Positive => index,
-                            Polarity::Negative => -index,
-                        }
-                    })
-                    .collect()
+            .filter_map(|clause| {
+                let clause = &clause.0;
+                if clause.is_empty() {
+                    None
+                } else {
+                    Some(
+                        clause
+                            .iter()
+                            .map(|Literal { variable, polarity }| {
+                                let index = match map.get(variable) {
+                                    Some(index) => *index,
+                                    None => {
+                                        map.insert(*variable, next_index);
+                                        next_index += 1;
+                                        next_index - 1
+                                    }
+                                } as i32;
+                                match polarity {
+                                    Polarity::Positive => index,
+                                    Polarity::Negative => -index,
+                                }
+                            })
+                            .collect(),
+                    )
+                }
             })
             .collect();
         let mut variables = vec![Variable(0); next_index];
